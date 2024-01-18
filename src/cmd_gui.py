@@ -38,7 +38,7 @@ def run2():
     window = Window()
     window.title = "File System Manager"
 
-    collapsible_remove_prefix = create_collapsible_column(
+    collapsible_remove_prefix = create_column_collapsible(
         window=window,
         layout_items=[[sg.B("Some Button")]],
         title_text="Remove Prefix",
@@ -46,7 +46,7 @@ def run2():
     window.layout.append([collapsible_remove_prefix])
     window.layout.append([sg.HSep(pad=(0, 20))])
 
-    collapsible_remove_suffix = create_collapsible_column(
+    collapsible_remove_suffix = create_column_collapsible(
         window=window,
         layout_items=[[sg.B("Some Button 2")]],
         title_text="Remove Suffix",

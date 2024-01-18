@@ -7,7 +7,7 @@ from .mrs_common import *
 import PySimpleGUI as sg
 import logging
 
-#_log = logger(__name__)
+_log = logger(__name__)
 
 
 class WindowColor(str, Enum):
@@ -33,46 +33,22 @@ class WindowEventSubscriber(ABC):
 
 
 class WindowKey(ClassInfo):
-    NOT_SPECIFIED: str = "?"
-    DELIMITER = "."
-    PREFIX = "-"
-    SUFFIX = "-"
-
-    def __init__(self, parts: Union[str, List[str]]):
+    def __init__(self, key: str | WindowKey | None = None) -> None:
         super(WindowKey, self).__init__()
-        pysimplegui_key = None
-        if isinstance(parts, str):
-            pysimplegui_key = parts
-        elif isinstance(parts, list) and len(parts) == 1:
-            pysimplegui_key = parts[0]
-
-        if pysimplegui_key is not None and parts.startswith("-") and parts.startswith("-") and parts.endswith("-"):
-            self._name = pysimplegui_key
-        else:
-            parts_list = parts if isinstance(parts, list) else [str(parts)]
-            parts_split = (WindowKey.DELIMITER.join(parts_list)).split(WindowKey.DELIMITER)
-            parts_list = list(filter_none(map(WindowKey.__clean_part, parts_split)))
-            if not parts_list:
-                raise ValueError(f"Invalid key {parts}")
-            self._name = "-" + (".".join(parts_list)) + "-"
-
+        self._name = str(key) if key is not None else str(uuid.uuid4().hex)
         self._name_casefold = self._name.casefold()
         self._hash = hash(self._name_casefold)
-
-    @staticmethod
-    def __clean_part(p: str) -> Optional[str]:
-        p = trim(p)
-        if p is None: return p
-        while p is not None and p.startswith(WindowKey.PREFIX): p = trim(p[1:])  # remove first char
-        while p is not None and p.endswith(WindowKey.SUFFIX): p = trim(p[:-1])  # remove last char
-        return p
 
     @property
     def name(self) -> str: return self._name
 
     def __eq__(self, other):
+        if isinstance(other, str):
+            return self.__eq__(WindowKey(other))
+
         if isinstance(other, WindowKey):
             return self._hash == other._hash and self._name_casefold == other._name_casefold
+
         return NotImplemented
 
     def __hash__(self): return self._hash
@@ -82,27 +58,6 @@ class WindowKey(ClassInfo):
     def __repr__(self): return f"{self.class_name}({repr(self.name)})"
 
 
-class WindowKeyBuilder:
-    def __init__(self, name: str, keys_all: Optional[Set[WindowKey]] = None, parent: Optional[WindowKeyBuilder] = None):
-        super(WindowKeyBuilder, self).__init__()
-        self.keys_all = keys_all
-        if self.keys_all is None and parent is not None:
-            self.keys_all = parent.keys_all
-        if self.keys_all is None:
-            self.keys_all = set()
-        self._name = name
-        self._parent = parent
-        self._parts = [name]
-        if parent is not None:
-            self._parts = parent._parts + [name]
-
-    def __getitem__(self, name: str) -> WindowKeyBuilder:
-        return WindowKeyBuilder(name, keys_all=self.keys_all, parent=self)
-
-    def key(self, name) -> WindowKey:
-        key = WindowKey(self._parts + [name])
-        self.keys_all.add(key)
-        return key
 
 
 class WindowEvent:
@@ -137,20 +92,42 @@ class Window(WindowLayout, ClassInfo, ClassLogging):
         self.title: str = Window.TITLE_NOT_DEFINED
         self._subscribers: Dict[WindowKey, List[Callable[WindowEvent]]] = {}
         self._subscribers_exit: List[Callable[WindowEvent]] = []
-        self.key_builder = WindowKeyBuilder(self.class_instance_name)
         self.font: str = self.__class__.FONT
         self.font_size: int = self.__class__.FONT_SIZE
         self.theme: str = self.__class__.THEME
         self.pysimplegui_window: Optional[sg.Window] = None
         self._window_size_x = -1
         self._window_size_y = -1
+        self._window_key_id_counter = 0
 
-    def subscribe(self, key: WindowKey, handler: Callable[WindowEvent]):
-        if key not in self._subscribers: self._subscribers[key] = []
-        self._subscribers[key].append(handler)
+    def subscribe(self, key: str | WindowKey | [WindowKey], handler: Callable[WindowEvent]):
+        keys: [WindowKey] = []
+        if isinstance(key, str):
+            keys.append(WindowKey(key))
+        elif isinstance(key, WindowKey):
+            keys.append(key)
+        elif isinstance(key, list):
+            keys = key
 
-    def subscribe_exit(self, handler: Callable[WindowEvent]):
-        self._subscribers_exit.append(handler)
+        for k in keys:
+            if k not in self._subscribers:
+                self._subscribers[k] = []
+
+            self._subscribers[k].append(handler)
+
+    def create_key_id(self) -> str:
+        self._window_key_id_counter += 1
+        return str(self._window_key_id_counter)
+
+    def create_key(self, window_key_id: str, name: str) -> WindowKey:
+        return WindowKey(f"-{window_key_id}:{name}-")
+
+    def create_keys(self, *args) -> [WindowKey]:
+        key_id = self.create_key_id()
+        keys = []
+        for arg in args:
+            keys.append(self.create_key(key_id, arg))
+        return keys
 
     def start(self):
         if self.title is None or self.title == Window.TITLE_NOT_DEFINED:
@@ -179,11 +156,15 @@ class Window(WindowLayout, ClassInfo, ClassLogging):
         self._log.debug(window_event)
         if window_event.event_raw in (sg.WIN_CLOSED, 'Exit'):
             self._log.debug("Exiting...")
-            for subscriber in self._subscribers_exit:
-                subscriber(window_event)
             return False
 
         self._check_window_size()
+
+        self._log.debug(f"Subscribers={len(self._subscribers.keys())}")
+        for i, subscriber in enumerate(self._subscribers.keys()):
+            self._log.debug(f"  Subscriber[{i}]: {subscriber}")
+
+
         if window_event.event in self._subscribers:
             subscribers = self._subscribers[window_event.event]
             self._log.debug(f"Calling {len(subscribers)} subscribers for event {window_event}")
@@ -209,7 +190,7 @@ class Window(WindowLayout, ClassInfo, ClassLogging):
     @property
     def name(self) -> str: return f"{self.class_instance_name}({self.title})"
 
-    def __getitem__(self, key: Union[str, WindowKey]):
+    def __getitem__(self, key: str | WindowKey):
         k = str(key)
         try:
             return self.pysimplegui_window[k]
@@ -219,22 +200,7 @@ class Window(WindowLayout, ClassInfo, ClassLogging):
             raise
 
 
-class WindowElement(ABC, ClassInfo, ClassLogging):
-    def __init__(self, window: Window):
-        super(WindowElement, self).__init__()
-        self.window = window
-        self.key_builder = window.key_builder[self.class_instance_name]
-        self.layout: List = []
-
-    def key(self, name: str) -> WindowKey: return self.key_builder.key(name)
-
-    def subscribe_handler(self, keys: Union[WindowKey, List[WindowKey]], handler: Callable[WindowEvent]):
-        keys = keys if isinstance(keys, list) else [keys]
-        for key in keys:
-            self.window.subscribe(key, handler)
-
-
-class WindowElementDirSelect(WindowElement):
+class WindowElementDirSelect():
     def __init__(
             self,
             window: Window,
@@ -307,7 +273,7 @@ class WindowElementDirSelectValues(NamedTuple):
     is_valid: bool
 
 
-def create_collapsible_column(
+def create_column_collapsible(
         window: Window,
         layout_items: List[Any],
         title_text: str = "TITLE",
@@ -315,13 +281,12 @@ def create_collapsible_column(
         arrow_down: str = sg.SYMBOL_DOWN,
         collapsed: bool = True
 ) -> sg.Column:
-    arrow_key = uuid.uuid4().hex
+    arrow_key, title_key, section_column_key, column_key = window.create_keys("arrow_key", "title_key", "section_column_key", "column_key")
+
     arrow = sg.Text((arrow_up if collapsed else arrow_down), enable_events=True, key=arrow_key)
 
-    title_key = uuid.uuid4().hex
     title = sg.Text(title_text, enable_events=True, key=str(title_key))
 
-    section_column_key = uuid.uuid4().hex
     section_column = sg.Column(
         layout_items,
         key=str(section_column_key),
@@ -329,71 +294,17 @@ def create_collapsible_column(
         # metadata=(self.arrow_down, self.arrow_up)
     )
 
-    # self.section_pin = sg.pin(self.section_column)
-
-    column_key = uuid.uuid4().hex
     column = sg.Column([
         [arrow, title],
         [sg.pin(section_column)]
     ], key=column_key)
 
-    event_key = uuid.uuid4().hex
-
     def collapse_handler(event: WindowEvent):
         sc = event.window[section_column_key]
         visible = sc.visible
         sc.update(visible=not sc.visible)
-        arw = event.window[arrow_key]
-        arw.update(arrow_up if visible else arrow_down)
+        arrow_element = event.window[arrow_key]
+        arrow_element.update(arrow_up if visible else arrow_down)
 
-    window.subscribe(WindowKey(event_key), collapse_handler)
+    window.subscribe([arrow_key, title_key, section_column_key], collapse_handler)
     return column
-
-
-class WindowElementCollapsible(WindowElement):
-    def __init__(
-            self,
-            window: Window,
-            layout_items: List[Any],
-            title_text: str = "TITLE",
-            arrow_up: str = sg.SYMBOL_UP,
-            arrow_down: str = sg.SYMBOL_DOWN,
-            collapsed: bool = True
-    ):
-        super(WindowElementCollapsible, self).__init__(window)
-        self.arrow_up = arrow_up
-        self.arrow_down = arrow_down
-
-        self.arrow_key = self.key("arrow")
-        self.arrow = sg.Text((arrow_up if collapsed else arrow_down), enable_events=True, key=str(self.arrow_key))
-
-        self.title_key = self.key("title")
-        self.title = sg.Text(title_text, enable_events=True, key=str(self.title_key))
-
-        self.section_column_key = self.key("section_column")
-        self.section_column = sg.Column(
-            layout_items,
-            key=str(self.section_column_key),
-            visible=not collapsed,
-            # metadata=(self.arrow_down, self.arrow_up)
-        )
-
-        # self.section_pin = sg.pin(self.section_column)
-
-        self.column_key = self.key("column")
-        self.column = sg.Column([
-            [self.arrow, self.title],
-            [sg.pin(self.section_column)]
-        ], key=str(self.column_key))
-
-        self.layout = self.column
-        self.subscribe_handler([self.arrow_key, self.title_key], self.collapse_handler)
-
-    def collapse_handler(self, event: WindowEvent):
-        sc = event.window[self.section_column_key]
-        visible = sc.visible
-        sc.update(visible=not sc.visible)
-        arw = event.window[self.arrow_key]
-        arw.update(self.arrow_up if visible else self.arrow_down)
-
-
