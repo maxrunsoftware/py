@@ -1,26 +1,18 @@
-import json
-import logging
-import os
-import re
-from abc import ABC, abstractmethod, ABCMeta
+from abc import ABC, abstractmethod
 from pathlib import Path
-from pprint import pprint, pformat
-from typing import Optional
+import re
+from typing import List
 
-from mrs import *
+from src.mrs.mrs_common import ClassInfo, ClassLogging
+from src.mrs.mrs_gui import Window, WindowElementDirSelect, WindowElementCollapsible, WindowEvent
+
 import PySimpleGUI as sg
-from mrs.mrs_gui import *
-
-import logging
-
-from src import cmd_gui
-
-_log = logger(__name__)
 
 
-class Command(ABC, ClassInfo, ClassLogging):
+class CommandBase(ABC, ClassInfo, ClassLogging):
     def __init__(self, window: Window):
-        super(Command, self).__init__()
+        super(CommandBase, self).__init__()
+
         self.window = window
         self.key_builder = kb = window.key_builder[self.class_name]
         self.dir_select = WindowElementDirSelect(window, show_recursive=True)
@@ -28,7 +20,8 @@ class Command(ABC, ClassInfo, ClassLogging):
         self.scan = sg.Button("Scan", key=str(self.scan_key))
         self.section_content = [self.dir_select.layout, [sg.Push(), self.scan]]
         extras = self.elements_extra
-        if extras is not None and len(extras) > 0: self.section_content.append(extras)
+        if extras is not None and len(extras) > 0:
+            self.section_content.append(extras)
 
         # self.section_content = [sg.Text("Hello World")]
         self.section = WindowElementCollapsible(window, self.section_content, title_text=self.title_text)
@@ -51,38 +44,3 @@ class Command(ABC, ClassInfo, ClassLogging):
     def elements_extra(self) -> List: return []
 
     def add_to_window(self): self.window.layout.append([self.section.layout])
-
-
-class RenameByExif(Command):
-    def __init__(self, window: Window):
-        super().__init__(window)
-        self.title = "Rename by EXIF"
-
-    def handle_scan(self, event: WindowEvent, directory: Path, is_recursive: bool):
-        self._log.debug(f"Handling scan [{is_recursive=}]: {directory}")
-        entries = fs_list(str(directory), recursive=is_recursive)
-
-        for entry in entries:
-            s = "D" if entry.is_dir() else " "
-            s += " "
-            s += entry.path
-            print(s)
-
-
-def save_settings(commands: list[Command]):
-    _log.debug("Saving settings")
-
-
-def main():
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s %(levelname)-8s %(module)s.%(funcName)s %(filename)s:%(lineno)d [%(name)s]: %(message)s"
-    )
-
-    RUNTIME_INFO.log_runtime_info(_log)
-    cmd_gui.run2()
-
-
-
-if __name__ == '__main__':
-    main()
