@@ -3,6 +3,7 @@ from mrs.mrs_gui import *
 
 import logging
 
+from src import cmd_gui
 
 _log = logger(__name__)
 
@@ -20,30 +21,7 @@ def handle_scan(self, event: WindowEvent, directory: Path, is_recursive: bool):
 
 
 
-def run_test():
-    window = Window()
-    window.title = "File System Manager"
 
-    collapsible_remove_prefix = create_column_collapsible(
-        window=window,
-        layout_items=[[sg.B("Some Button")]],
-        title_text="Remove Prefix",
-    )
-    window.layout.append([collapsible_remove_prefix])
-    window.layout.append([sg.HSep(pad=(0, 20))])
-
-    collapsible_remove_suffix = create_column_collapsible(
-        window=window,
-        layout_items=[[sg.B("Some Button 2")]],
-        title_text="Remove Suffix",
-    )
-    window.layout.append([collapsible_remove_suffix])
-    window.layout.append([sg.HSep(pad=(0, 20))])
-
-    window.start()
-
-    _log.debug("Saving settings")
-    # TODO: Save directory
 
 def main():
     logging.basicConfig(
@@ -52,7 +30,7 @@ def main():
     )
 
     RUNTIME_INFO.log_runtime_info(_log)
-    run_test()
+    cmd_gui.run()
 
 
 

@@ -200,6 +200,8 @@ class Window(WindowLayout, ClassInfo, ClassLogging):
             raise
 
 
+
+
 class WindowElementDirSelect():
     def __init__(
             self,
@@ -267,10 +269,109 @@ class WindowElementDirSelect():
         return WindowElementDirSelectValues(is_recursive=is_recursive, directory=directory, is_valid=is_valid)
 
 
-class WindowElementDirSelectValues(NamedTuple):
-    is_recursive: bool
-    directory: Optional[Path]
-    is_valid: bool
+class BrowseDirValues:
+    def __init__(self, key: WindowKey):
+        super(BrowseDirValues, self).__init__()
+        self.key = key
+        self.recursive: bool = False
+        self.directory: Path | None = None
+        self.is_valid: bool = False
+
+    def update(self, directory: str | Path | None = None, recursive: bool = False) -> None:
+        if self.recursive != recursive:
+            _log.debug(f"{self.__class__.__name__}[{self.key}].recursive  old:{self.recursive}  new:{recursive}")
+            self.recursive = recursive
+
+        directory_path: Path | None = None
+        if directory is None:
+            directory_path = None
+        if isinstance(directory, Path):
+            directory_path = directory
+        elif isinstance(directory, str) and trim(directory) is not None:
+            directory_path = Path(directory)
+
+        if self.directory != directory_path:
+            _log.debug(f"{self.__class__.__name__}[{self.key}].recursive  old:{self.directory}  new:{directory_path}")
+            self.directory = directory_path
+
+        is_valid = True if self.directory is not None and self.directory.exists() and self.directory.is_dir() else False
+        if self.is_valid != is_valid:
+            _log.debug(f"{self.__class__.__name__}[{self.key}].is_valid  old:{self.is_valid}  new:{is_valid}")
+            self.is_valid = is_valid
+
+
+def create_elements_browse_dir(
+        window: Window,
+        change_callback: Callable[BrowseDirValues],
+        label_text: str = "Directory",
+        show_recursive: bool = False,
+        default_directory: str | Path | None = None,
+        default_recursive: bool = False,
+):
+    label_key, input_key, browse_key, recursive_key, browse_dir_values_key = window.create_keys("label_key", "input_key", "browse_key", "recursive_key", "browse_dir_values_key")
+
+    default_directory_str: str | None = None
+    if default_directory is None:
+        default_directory_str = None
+    if isinstance(default_directory, Path):
+        default_directory_str = str(default_directory)
+    elif isinstance(default_directory, str) and trim(default_directory) is not None:
+        default_directory_str = default_directory
+
+    label = sg.Text(
+        label_text,
+        key=label_key,
+        size=(8, 1),
+        justification="right",
+    )
+
+    input = sg.Input(
+        key=input_key,
+        enable_events=True,
+        text_color=WindowColor.BLACK,
+        background_color=WindowColor.WHITE,
+        default_text='' if default_directory_str is None else default_directory_str,
+    )
+
+    browse = sg.FolderBrowse(
+        key=browse_key,
+        target=str(input_key),  # https://github.com/PySimpleGUI/PySimpleGUI/issues/6260
+        initial_folder=default_directory_str
+    )
+
+    recursive = sg.Checkbox(
+        "Recursive",
+        key=recursive_key,
+        visible=show_recursive,
+        default=default_recursive,
+    )
+
+    state = BrowseDirValues(browse_dir_values_key)
+    state.update(default_directory_str, default_recursive)
+
+    def input_handler(event: WindowEvent):
+        directory_string = event[input_key]
+        state.update(directory_string, event.window[recursive_key].get())
+        color: str = sg.theme_text_element_background_color()
+        if state.directory is not None:
+            color = WindowColor.GREEN_LIGHT if state.is_valid else WindowColor.RED_LIGHT
+        _log.debug(f"Setting background color of '{input_key}' to {color}")
+        event.window[input_key].update(background_color=color)
+        change_callback(state)
+
+    window.subscribe([input_key], input_handler)
+
+    change_callback(state)
+
+    layout = [
+        label,
+        input,
+        browse,
+        recursive
+    ]
+
+    return layout
+
 
 
 def create_column_collapsible(
@@ -279,17 +380,17 @@ def create_column_collapsible(
         title_text: str = "TITLE",
         arrow_up: str = sg.SYMBOL_UP,
         arrow_down: str = sg.SYMBOL_DOWN,
-        collapsed: bool = True
+        collapsed: bool = True,
 ) -> sg.Column:
     arrow_key, title_key, section_column_key, column_key = window.create_keys("arrow_key", "title_key", "section_column_key", "column_key")
 
     arrow = sg.Text((arrow_up if collapsed else arrow_down), enable_events=True, key=arrow_key)
 
-    title = sg.Text(title_text, enable_events=True, key=str(title_key))
+    title = sg.Text(title_text, enable_events=True, key=title_key)
 
     section_column = sg.Column(
         layout_items,
-        key=str(section_column_key),
+        key=section_column_key,
         visible=not collapsed,
         # metadata=(self.arrow_down, self.arrow_up)
     )
