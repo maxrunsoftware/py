@@ -1,3 +1,17 @@
+#  Copyright (c) 2024 Max Run Software (dev@maxrunsoftware.com)
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
 from __future__ import annotations
 
 import base64
@@ -10,16 +24,16 @@ import os
 import re
 import sys
 import threading
-from abc import ABC, abstractmethod, ABCMeta
+from abc import ABC, ABCMeta, abstractmethod
 from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal
-from enum import Enum
+from enum import auto, Enum, IntFlag, StrEnum
 from inspect import FrameInfo
-from logging import LoggerAdapter, Logger
-from os import PathLike, stat_result, DirEntry
+from logging import Logger, LoggerAdapter
+from os import DirEntry, PathLike, stat_result
 from pathlib import Path, PurePath
-from types import ModuleType, FrameType
+from types import FrameType, ModuleType
 from typing import *
 from typing import Any
 from uuid import UUID
@@ -59,7 +73,7 @@ def trim_casefold(s: str | None) -> str | None:
     return s if s is None else trim(s.casefold())
 
 
-def coalesce(*args: T) -> T | None:
+def coalesce(*args: Any) -> Any:
     if args is None:
         return None
     for item in args:
@@ -85,17 +99,30 @@ def bool_parse(value: str | bytes | bool) -> bool:
     raise ValueError("invalid literal for bool_parse(): " + value.__repr__())
 
 
-def split(delimiters: [str], string: str, maxsplit: int = 0) -> list[str]:
+def split(delimiters: str | [str], string: str, maxsplit: int = 0, remove_empty: bool = False) -> list[str]:
     """
     Split a string on multiple characters
     https://stackoverflow.com/a/13184791
+
     :param delimiters: the delimiters to split the string on
     :param string: the string to actually split
     :param maxsplit: the number of times to split the string. 0 means no limit
+    :param remove_empty: whether to remove empty strings
     :return: a list of strings split
     """
+    if isinstance(delimiters, str):
+        delimiters = [delimiters]
+
     regex_pattern = '|'.join(map(re.escape, delimiters))
-    return re.split(regex_pattern, string, maxsplit)
+    lst = re.split(regex_pattern, string, maxsplit)
+    if remove_empty:
+        lst2 = []
+        for s in lst:
+            if len(s) > 0:
+                lst2.append(s)
+        lst = lst2
+    # print_error(f"Split string to {len(lst)} parts:  {lst}")
+    return lst
 
 
 def split_on_capital(string: str, maxsplit: int = 0) -> list[str]:
@@ -169,8 +196,10 @@ def datetime_now():
     return datetime.now(timezone.utc).astimezone()
 
 
-def trim_dict(items: Mapping[str, str | None] | [Tuple[str | None, str | None]] | [[str | None]],
-              exclude_none_values=False) -> Dict[str, str | None]:
+def trim_dict(
+    items: Mapping[str, str | None] | [Tuple[str | None, str | None]] | [[str | None]],
+    exclude_none_values=False
+) -> Dict[str, str | None]:
     if isinstance(items, Mapping):
         items = [(k, v) for k, v in items.items()]
 
@@ -194,7 +223,7 @@ def print_error(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 
-def tostring_attributes(obj, included=None, excluded=None, use_repr=False) -> str:
+def tostring_attributes(obj, included=None, excluded=None, use_repr=False, multiline=False) -> str:
     result = ""
     for name in sorted(obj.__dir__(), key=lambda x: x.casefold()):
         if included is not None and name not in included:
@@ -223,7 +252,12 @@ def tostring_attributes(obj, included=None, excluded=None, use_repr=False) -> st
             v = str(v)
 
         if len(result) > 0:
-            result += ", "
+            if multiline:
+                result += f"\n"
+            else:
+                result += ", "
+        if multiline:
+            result += '  '
         result += f"{name}={v}"
     return result
 
@@ -256,9 +290,46 @@ def str_convert_to_type(value: Any | None, type_to_convert_to: type, trim_if_str
             return float(value_str)
         else:
             raise NotImplementedError(
-                f"No handler available to convert '{value}' to type {type_to_convert_to.__name__}")
+                f"No handler available to convert '{value}' to type {type_to_convert_to.__name__}"
+            )
     except ValueError as ve:
         raise ValueError(f"Could not convert '{value}' to type {type_to_convert_to.__name__}") from ve
+
+
+def iterable_flatten(
+    item: Any,
+    parser: Callable[[Any], Any] | None = None,
+) -> list[Any]:
+    """
+    Loops through all arguments and adds them to a return list. If any of the arguments are
+    an Iterable then loops over the Iterable and adds them to the return list, and so on, and so on.
+
+    Note: possible 'infinite recursion' if `parser` returns multiple items that are then fed back into
+    parser, which then returns more and more items, etc
+    """
+    return_items: list[Any] = []
+    stack: list[Any] = [item, ]
+    while stack:
+        # if len(stack) > 20 or len(return_items) > 20:
+        #    raise ValueError(f"Too many items\nstack={stack}\n\nreturn_items={return_items}\n")
+        current = stack.pop()
+
+        if parser is not None:
+            current = parser(current)
+
+        if current is None:
+            return_items.append(current)
+        elif isinstance(current, str):
+            return_items.append(current)
+        elif isinstance(current, Iterable):
+            if isinstance(current, Reversible):
+                stack.extend(reversed(current))
+            else:
+                stack.extend(reversed(list(current)))
+        else:
+            return_items.append(current)
+
+    return return_items
 
 
 class Object:
@@ -423,9 +494,8 @@ class DictStrBase(MutableMapping, metaclass=ABCMeta):
             data = {}
         self.update(data, **kwargs)
 
-    @staticmethod
     @abstractmethod
-    def _convert_key(s: str) -> str:
+    def _convert_key(self, s: str) -> str:
         raise NotImplementedError("DictStr._convert_key not implemented")
 
     def __setitem__(self, key, value):
@@ -466,10 +536,9 @@ class DictStrCase(DictStrBase):
     def __init__(self, data=None, **kwargs):
         super().__init__(data, **kwargs)
 
-    @staticmethod
-    def _convert_key(s: str) -> str: return s
+    def _convert_key(self, s: str) -> str: return s
 
-    def copy(self) -> DictStrCase:  # Because Self type isn't available yet
+    def copy(self) -> Self:
         # noinspection PyTypeChecker
         return super().copy()
 
@@ -478,10 +547,9 @@ class DictStrCasefold(DictStrBase):
     def __init__(self, data=None, **kwargs):
         super().__init__(data, **kwargs)
 
-    @staticmethod
-    def _convert_key(s: str) -> str: return s.casefold()
+    def _convert_key(self, s: str) -> str: return s.casefold()
 
-    def copy(self) -> DictStrCasefold:  # Because Self type isn't available yet
+    def copy(self) -> Self:
         # noinspection PyTypeChecker
         return super().copy()
 
@@ -669,6 +737,7 @@ RUNTIME_INFO = RuntimeInfo()
 
 # region fs
 
+
 FS_BUFFERSIZE = 1024 * 1024 * 20
 
 
@@ -698,8 +767,10 @@ def fs_size(stat: stat_result) -> int:
     return stat.st_size
 
 
-def fs_list(path: str, recursive: bool = False, follow_symlinks: bool = False, include_files: bool = True,
-            include_dirs: bool = True, include_symlinks: bool = False, sort_items: bool = True) -> list[DirEntry]:
+def fs_list(
+    path: str, recursive: bool = False, follow_symlinks: bool = False, include_files: bool = True,
+    include_dirs: bool = True, include_symlinks: bool = False, sort_items: bool = True
+) -> list[DirEntry]:
     """Gets DirEntry objects for given directory."""
     items = []
     if not include_files and not include_dirs:
@@ -886,7 +957,8 @@ def next_int(name: str = None) -> int:
 
 class ClassInfo:
     CLASS_INSTANCE_NAME_FORMATTER: Callable[..., ClassInfo] = lambda s: s.class_name + '{' + str(
-        s.class_instance_id) + '}'
+        s.class_instance_id
+    ) + '}'
 
     def __init__(self):
         super(ClassInfo, self).__init__()
@@ -1231,4 +1303,779 @@ class Color:
         self._set_rgb(tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)))
         self._calc_hsv()
 
+
+class TerminalGraphicsEffect(IntFlag):
+    NONE = auto()
+    RESET = auto()
+    BOLD = auto()
+    DIM = auto()
+    ITALIC = auto()
+    UNDERLINE = auto()
+    BLINK = auto()
+    REVERSE = auto()
+    HIDDEN = auto()
+    STRIKE = auto()
+
+    @classmethod
+    def items(cls) -> [Tuple[Self, str, int]]:
+        return [(cls(x), cls(x).name, cls(x).value) for x in cls]
+
+    @classmethod
+    def convert(cls, value: Self | int | str | None) -> Self:
+        if value is None:
+            return cls.NONE
+        if type(value) is type(cls):
+            return value
+        if isinstance(value, int):
+            return cls(value)
+        if isinstance(value, str):
+            value = value.upper()
+            for t, n, i in cls.items():
+                if n.upper() == value:
+                    return t
+        return cls(value)
+
+
+class TerminalGraphicsColor(StrEnum):
+    BLACK = auto()
+    BLACK_BRIGHT = auto()
+    RED = auto()
+    RED_BRIGHT = auto()
+    GREEN = auto()
+    GREEN_BRIGHT = auto()
+    YELLOW = auto()
+    YELLOW_BRIGHT = auto()
+    BLUE = auto()
+    BLUE_BRIGHT = auto()
+    MAGENTA = auto()
+    MAGENTA_BRIGHT = auto()
+    CYAN = auto()
+    CYAN_BRIGHT = auto()
+    WHITE = auto()
+    WHITE_BRIGHT = auto()
+    DEFAULT = auto()
+
+    @classmethod
+    def items(cls) -> [Tuple[Self, str]]:
+        return [(cls(x), cls(x).name) for x in cls]
+
+    @classmethod
+    def convert(cls, value: Self | str | None) -> Self:
+        if value is None:
+            return cls.DEFAULT
+        if type(value).__name__ == cls.__name__:
+            return value
+        if isinstance(value, str):
+            value = value.upper()
+            for t, n in cls.items():
+                if n.upper() == value:
+                    return t
+        return cls(value)
+
+
+class TerminalGraphicsFormatter(ClassInfo):
+    debug = False
+
+    _EFFECT_2_ANSI: dict[TerminalGraphicsEffect, int] = {
+        TerminalGraphicsEffect.NONE: -1000,
+        TerminalGraphicsEffect.RESET: 0,
+        TerminalGraphicsEffect.BOLD: 1,
+        TerminalGraphicsEffect.DIM: 2,
+        TerminalGraphicsEffect.ITALIC: 3,
+        TerminalGraphicsEffect.UNDERLINE: 4,
+        TerminalGraphicsEffect.BLINK: 5,
+        TerminalGraphicsEffect.REVERSE: 7,
+        TerminalGraphicsEffect.HIDDEN: 8,
+        TerminalGraphicsEffect.STRIKE: 9,
+    }
+
+    _COLOR_2_ANSI: dict[TerminalGraphicsColor, int] = {
+        TerminalGraphicsColor.BLACK: 30,
+        TerminalGraphicsColor.BLACK_BRIGHT: 90,
+        TerminalGraphicsColor.RED: 31,
+        TerminalGraphicsColor.RED_BRIGHT: 91,
+        TerminalGraphicsColor.GREEN: 32,
+        TerminalGraphicsColor.GREEN_BRIGHT: 92,
+        TerminalGraphicsColor.YELLOW: 33,
+        TerminalGraphicsColor.YELLOW_BRIGHT: 93,
+        TerminalGraphicsColor.BLUE: 34,
+        TerminalGraphicsColor.BLUE_BRIGHT: 94,
+        TerminalGraphicsColor.MAGENTA: 35,
+        TerminalGraphicsColor.MAGENTA_BRIGHT: 95,
+        TerminalGraphicsColor.CYAN: 36,
+        TerminalGraphicsColor.CYAN_BRIGHT: 96,
+        TerminalGraphicsColor.WHITE: 37,
+        TerminalGraphicsColor.WHITE_BRIGHT: 97,
+        TerminalGraphicsColor.DEFAULT: 39,
+    }
+
+    _PREFIX = "\033["
+    _SUFFIX = "m"
+    _RESET = _PREFIX + '0' + _SUFFIX
+
+    def __init__(
+        self,
+        fg: TerminalGraphicsColor | str | None = None,
+        bg: TerminalGraphicsColor | str | None = None,
+        ef: TerminalGraphicsEffect | int | None = None,
+    ):
+        super(TerminalGraphicsFormatter, self).__init__()
+
+        tgc = TerminalGraphicsColor
+        tge = TerminalGraphicsEffect
+        r = self._RESET
+
+        self._fg = fg = tgc.convert(fg)
+        self._bg = bg = tgc.convert(bg)
+        self._ef = ef = tge.convert(ef)
+
+        self._ansi = []
+        self._prefix = ''
+        self._suffix = ''
+
+        if fg is tgc.DEFAULT and bg is tgc.DEFAULT and ef is tge.NONE:
+            return
+
+        if fg is tgc.DEFAULT and bg is tgc.DEFAULT and ef is tge.RESET:
+            self._ansi.append(0)
+            self._prefix += r
+            return
+
+        ps: [int] = [
+            self._COLOR_2_ANSI[fg],
+            self._COLOR_2_ANSI[bg] + 10,
+        ]
+        for e in [effect[0] for effect in tge.items()]:
+            if e is not tge.NONE and e in ef:
+                ps.append(self._EFFECT_2_ANSI[e])
+
+        ps = [x for x in ps if x >= 0]
+        ps.sort()
+
+        self._ansi = ps
+
+        self._prefix = r + self._PREFIX + ';'.join([str(s) for s in ps]) + self._SUFFIX
+        self._suffix = r
+
+    def format(self, text: str) -> str:
+        t = self._prefix + text + self._suffix
+        if self.debug:
+            t = (self._prefix.replace("\033", "\\033")
+                 + t.replace("\n", "")
+                 + self._suffix.replace("\033", "\\033")
+                 + "\n")
+        return t
+
+    @classmethod
+    def create(cls, *args) -> TerminalGraphicsFormatter:
+        if args is None or len(args) == 0:
+            return TerminalGraphicsFormatter()
+        formatters = []
+        colors = []
+        effects = []
+        items = [arg for arg in args]
+        while len(items) > 0:
+            item = items.pop(0)
+            if item is None:
+                colors.append(None)
+            elif isinstance(item, tuple) or isinstance(item, list):
+                for x in item:
+                    items.append(x)
+            elif isinstance(item, TerminalGraphicsFormatter):
+                formatters.append(item)
+            elif isinstance(item, TerminalGraphicsColor) or isinstance(item, str):
+                colors.append(TerminalGraphicsColor.convert(item))
+            elif isinstance(item, TerminalGraphicsEffect) or isinstance(item, int):
+                effects.append(TerminalGraphicsEffect(item))
+
+        effects_flags = TerminalGraphicsEffect.NONE
+        for effect in effects:
+            effects_flags |= effect
+
+        if len(formatters) > 0:
+            return formatters[0]
+
+        color_fg = colors[0] if 0 < len(colors) else None
+        color_bg = colors[1] if 1 < len(colors) else None
+        if color_fg is None:
+            color_fg = TerminalGraphicsColor.DEFAULT
+        if color_bg is None:
+            color_bg = TerminalGraphicsColor.DEFAULT
+
+        return TerminalGraphicsFormatter(color_fg, color_bg, effects_flags)
+
+
 # endregion color
+
+# region images
+
+# @formatter:off
+# https://stackoverflow.com/questions/73758704/is-there-a-way-to-clear-a-tree-element-in-pysimplegui-before-adding-new-data
+# folder_icon = b'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAABnUlEQVQ4y8WSv2rUQRSFv7vZgJFFsQg2EkWb4AvEJ8hqKVilSmFn3iNvIAp21oIW9haihBRKiqwElMVsIJjNrprsOr/5dyzml3UhEQIWHhjmcpn7zblw4B9lJ8Xag9mlmQb3AJzX3tOX8Tngzg349q7t5xcfzpKGhOFHnjx+9qLTzW8wsmFTL2Gzk7Y2O/k9kCbtwUZbV+Zvo8Md3PALrjoiqsKSR9ljpAJpwOsNtlfXfRvoNU8Arr/NsVo0ry5z4dZN5hoGqEzYDChBOoKwS/vSq0XW3y5NAI/uN1cvLqzQur4MCpBGEEd1PQDfQ74HYR+LfeQOAOYAmgAmbly+dgfid5CHPIKqC74L8RDyGPIYy7+QQjFWa7ICsQ8SpB/IfcJSDVMAJUwJkYDMNOEPIBxA/gnuMyYPijXAI3lMse7FGnIKsIuqrxgRSeXOoYZUCI8pIKW/OHA7kD2YYcpAKgM5ABXk4qSsdJaDOMCsgTIYAlL5TQFTyUIZDmev0N/bnwqnylEBQS45UKnHx/lUlFvA3fo+jwR8ALb47/oNma38cuqiJ9AAAAAASUVORK5CYII='
+# file_icon = b'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAABU0lEQVQ4y52TzStEURiHn/ecc6XG54JSdlMkNhYWsiILS0lsJaUsLW2Mv8CfIDtr2VtbY4GUEvmIZnKbZsY977Uwt2HcyW1+dTZvt6fn9557BGB+aaNQKBR2ifkbgWR+cX13ubO1svz++niVTA1ArDHDg91UahHFsMxbKWycYsjze4muTsP64vT43v7hSf/A0FgdjQPQWAmco68nB+T+SFSqNUQgcIbN1bn8Z3RwvL22MAvcu8TACFgrpMVZ4aUYcn77BMDkxGgemAGOHIBXxRjBWZMKoCPA2h6qEUSRR2MF6GxUUMUaIUgBCNTnAcm3H2G5YQfgvccYIXAtDH7FoKq/AaqKlbrBj2trFVXfBPAea4SOIIsBeN9kkCwxsNkAqRWy7+B7Z00G3xVc2wZeMSI4S7sVYkSk5Z/4PyBWROqvox3A28PN2cjUwinQC9QyckKALxj4kv2auK0xAAAAAElFTkSuQmCC'
+
+# @formatter:on
+
+# endregion images
+
+
+# region logging
+
+
+class LogColorStreamWrapper:
+
+    def __init__(
+        self,
+        stream,
+        debug: Any = None,
+        info: Any = None,
+        warning: Any = None,
+        error: Any = None,
+        critical: Any = None,
+    ):
+        self.stream = stream
+        self.level_indexes: [int] = []
+
+        tgf = TerminalGraphicsFormatter
+        # tgc = TerminalGraphicsColor
+
+        debug = tgf.create(debug)
+        info = tgf.create(info)
+        warning = tgf.create(warning)
+        error = tgf.create(error)
+        critical = tgf.create(critical)
+
+        self.colors = {
+            'DEBUG': debug,
+            'INFO': info,
+            'WARNING': warning,
+            'ERROR': error,
+            'CRITICAL': critical,
+        }
+
+    def write(self, text: Any):
+        if text is None:
+            return
+        if not isinstance(text, str):
+            text = str(text)
+        formatter = self.get_formatter(text)
+        if formatter is None:
+            self.stream.write(text)
+        else:
+            self.stream.write(formatter.format(text))
+
+    def get_formatter(self, text: str) -> TerminalGraphicsFormatter | None:
+        # check cached indexes
+        for ix in self.level_indexes:
+            for k, v in self.colors.items():
+                if text[ix:ix + len(k)] == k:
+                    # print(f"-- found using cache at ix: {ix} --")
+                    return v
+
+        # search for index and keep the lowest find index
+        index_lowest = -1
+        for k, v in self.colors.items():
+            index_found = text.find(k)
+            if index_found >= 0:
+                if index_lowest < 0 or index_found < index_lowest:
+                    index_lowest = index_found
+
+        # we didn't find an index
+        if index_lowest < 0:
+            return None
+
+        # found index, cache and retry func now that index is cached
+        self.level_indexes.append(index_lowest)
+        return self.get_formatter(text)
+
+
+# noinspection PyShadowingBuiltins
+def logging_setup(
+    level: int | str = logging.DEBUG,
+    format="%(asctime)s %(levelname)-8s %(module)s.%(funcName)s %(filename)s:%(lineno)d [%(name)s]: %(message)s",
+    stream=sys.stdout,
+    debug: Any | None = TerminalGraphicsColor.BLUE,
+    info: Any | None = TerminalGraphicsColor.DEFAULT,
+    warning: Any | None = (TerminalGraphicsColor.YELLOW_BRIGHT, TerminalGraphicsEffect.BOLD),
+    error: Any | None = TerminalGraphicsColor.RED_BRIGHT,
+    critical: Any | None = (TerminalGraphicsColor.WHITE_BRIGHT, TerminalGraphicsColor.RED_BRIGHT, TerminalGraphicsEffect.BOLD),
+):
+    def level_parse(lvl):
+        lvl_map = {'D': logging.DEBUG, 'I': logging.INFO, 'W': logging.WARNING, 'E': logging.ERROR, 'C': logging.CRITICAL}
+        if lvl is None:
+            return logging.DEBUG
+
+        if isinstance(lvl, int):
+            if lvl in lvl_map.values():
+                return lvl
+            raise f"Invalid log level: {lvl}"
+
+        if isinstance(lvl, str):
+            lvl_char = trim(lvl.strip()[:1].upper())
+            if lvl_char is None:
+                return logging.DEBUG
+            lvl_val = lvl_map.get(lvl_char)
+            if lvl_val is not None:
+                return lvl_val
+            raise f"Invalid log level: {lvl}"
+
+        return level_parse(str(lvl))
+
+    level_int = level_parse(level)
+
+    logging.basicConfig(
+        format=format,
+        stream=LogColorStreamWrapper(
+            stream=stream,
+            debug=debug,
+            info=info,
+            warning=warning,
+            error=error,
+            critical=critical,
+        ),
+        level=level_int,
+    )
+
+
+# endregion logging
+
+
+class FileSystemEntrySnapshot(ClassInfo, ClassLogging):
+    def __init__(self, follow_symlinks: bool = False):
+        super(FileSystemEntrySnapshot, self).__init__()
+        self._is_case_sensitive: bool = RUNTIME_INFO.os.is_fs_case_sensitive
+        self._all = self._dict()
+        self._children = self._dict()
+        self._parents = self._dict()
+        self.follow_symlinks: bool = follow_symlinks
+
+    def _dict(self):
+        return dict() if self.is_case_sensitive else DictStrCasefold()
+
+    def clear(self):
+        self._all = self._dict()
+        self._children = self._dict()
+        self._parents = self._dict()
+
+    @property
+    def is_case_sensitive(self) -> bool:
+        return self._is_case_sensitive
+
+    def add(self, entry: FileSystemEntry) -> None:
+        self._all[entry.path_str] = entry
+
+    def get(self, path: str) -> FileSystemEntry | None:
+        o = self._all.get(path)
+        if o is not None:
+            return o
+        o = FileSystemEntry(path, snapshot=self)
+        self._all[path] = o
+        return o
+
+    # noinspection PyBroadException
+    def get_children(self, entry: FileSystemEntry) -> list[FileSystemEntry]:
+        if not entry.is_dir:
+            return []
+
+        path_str = entry.path_str
+        children = self._children.get(path_str)
+        if children is not None:
+            return children
+
+        children_str = []
+        try:
+            with os.scandir(path_str) as it:
+                for obj in it:
+                    if obj is not None:
+                        children_str.append(obj.path)
+        except Exception as e:
+            msg = f"Could not get directory listing for {path_str}"
+            _log.warning(msg, exc_info=e)
+            entry.add_error(msg, e)
+            return []  # do not cache failed attempts
+
+        children = []
+        for child_str in children_str:
+            children.append(self.get(child_str))
+
+        self._children[path_str] = children
+        return children
+
+    # noinspection PyBroadException
+    def get_parent(self, entry: FileSystemEntry) -> FileSystemEntry | None:
+        path_parent = entry.path.parent
+        if path_parent is None:
+            return None
+        path_parent = path_parent.absolute()
+        if path_parent is None:
+            return None
+
+        if (
+                (self._is_case_sensitive and str(path_parent) == str(entry.path)) or
+                (not self._is_case_sensitive and str(path_parent).casefold() == str(entry.path).casefold())
+        ):
+            return None  # at root so return no parent
+
+        return self.get(str(path_parent))
+
+    def get_children_all(self, entry: FileSystemEntry, include_self: bool = False) -> list[FileSystemEntry]:
+        if not entry.path.is_dir():
+            return [entry] if include_self else []
+
+        entries = self._dict()
+        dirs = [entry]
+        while len(dirs) > 0:
+            dir_current = dirs.pop()
+            for child in dir_current.children:
+                child_path_str = child.path_str
+                if child_path_str in entries:
+                    continue
+                entries[child_path_str] = child
+                if child.is_dir:
+                    dirs.append(child)
+
+        items = [x for x in entries.values()]
+        if include_self:
+            items.append(entry)
+        items.sort()
+        return items
+
+
+class FileSystemEntry(ClassInfo):
+    def __init__(
+        self,
+        path: str | Path | DirEntry,
+        follow_symlinks: bool | None = None,
+        snapshot: FileSystemEntrySnapshot | None = None,
+    ) -> None:
+        super(FileSystemEntry, self).__init__()
+        self._snapshot = snapshot or FileSystemEntrySnapshot()
+        self._path: Path | None = None
+        self._path_str: str | None = None
+        self._dir_entry: DirEntry | None = None
+        self._stat: os.stat_result | None = None
+        self._lstat: os.stat_result | None = None
+        self._is_file: bool | None = None
+        self._is_dir: bool | None = None
+        self._is_symlink: bool | None = None
+        self._follow_symlinks: bool | None = follow_symlinks
+        self._datetime_accessed: datetime | None = None
+        self._datetime_modified: datetime | None = None
+        self._datetime_created: datetime | None = None
+        self._size: int | None = None
+        self._children: list[DirEntry] | None = None
+        self.errors: [(str, Exception | None)] = []
+
+        if isinstance(path, DirEntry):
+            self._dir_entry = path
+            path = Path(path.path)
+
+        if not isinstance(path, Path):
+            path = Path(path)
+
+        path = path.absolute()
+        self._path = path
+        self._path_str = str(path)
+        self._path_str_cased = self._path_str if self._snapshot.is_case_sensitive else self._path_str.casefold()
+        self._path_parts: list[str] | None = None
+        self._path_parts_cased: list[str] | None = None
+        self._name: str = path.name
+
+    def __eq__(self, __value):
+        if not isinstance(__value, FileSystemEntry):
+            return False
+        return self._path_str_cased == __value._path_str_cased
+
+    def __str__(self):
+        return self._path_str
+
+    def __repr__(self):
+        return (
+                self.__class__.__module__
+                + "." + self.__class__.__name__
+                + f"(path={self.path_str}, follow_symlinks={self._follow_symlinks})"
+        )
+
+    def __hash__(self):
+        return hash(self._path_str_cased)
+
+    def __lt__(self, __value):
+        if __value is None or not isinstance(__value, FileSystemEntry):
+            return False
+
+        parts_x = self.path_parts_cased
+        parts_y = __value.path_parts_cased
+        len_x = len(parts_x)
+        len_y = len(parts_y)
+        len_min_parts = len_x if len_x < len_y else len_y
+
+        for i in range(len_min_parts):
+            x = parts_x[i]
+            y = parts_y[i]
+            if x == y:
+                continue
+            if x < y:
+                return True
+            return False
+
+        if len_x < len_y:
+            return True
+
+        return False
+
+    def add_error(self, msg: str, exception: Exception | None = None) -> None:
+        self.errors.append((msg, exception))
+
+    @property
+    def path_parts(self) -> list[str]:
+        o = self._path_parts
+        if o is None:
+            o = [x for x in self.path.parts]
+            self._path_parts = o
+        return o
+
+    @property
+    def path_parts_cased(self) -> list[str]:
+        o = self._path_parts_cased
+        if o is None:
+            o = [(x if self._snapshot.is_case_sensitive else x.casefold()) for x in self.path_parts]
+            self._path_parts_cased = o
+        return o
+
+    @property
+    def follow_symlinks(self) -> bool:
+        o = self._follow_symlinks
+        if o is None:
+            o = self._snapshot.follow_symlinks
+        return o
+
+    @follow_symlinks.setter
+    def follow_symlinks(self, value: bool | None):
+        self._follow_symlinks = value
+
+    @property
+    def path_str(self) -> str:
+        return self._path_str
+
+    @property
+    def path(self) -> Path:
+        o = self._path
+        if o is None:
+            o = Path(self._path_str)
+            self._path = o
+        return o
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def dir_entry(self) -> DirEntry | None:
+        return self._dir_entry
+
+    @property
+    def stat(self) -> os.stat_result:
+        o = self._stat
+        if o is None:
+            if self._dir_entry is not None:
+                o = self._dir_entry.stat(follow_symlinks=self.follow_symlinks)
+            else:
+                o = os.stat(self.path, follow_symlinks=self.follow_symlinks)
+            self._stat = o
+        return o
+
+    @property
+    def lstat(self) -> os.stat_result:
+        o = self._lstat
+        if o is None:
+            o = os.lstat(self.path)
+            self._lstat = o
+        return o
+
+    @property
+    def is_file(self) -> bool:
+        o = self._is_file
+        if o is None:
+            if self._dir_entry is not None:
+                o = self._dir_entry.is_file(follow_symlinks=self.follow_symlinks)
+            else:
+                o = self.path.is_file()
+            self._is_file = o
+        return o
+
+    @property
+    def is_dir(self) -> bool:
+        o = self._is_dir
+        if o is None:
+            if self._dir_entry is not None:
+                o = self._dir_entry.is_dir(follow_symlinks=self.follow_symlinks)
+            else:
+                o = self.path.is_dir()
+            self._is_dir = o
+        return o
+
+    @property
+    def is_symlink(self) -> bool:
+        o = self._is_symlink
+        if o is None:
+            if self._dir_entry is not None:
+                o = self._dir_entry.is_symlink()
+            else:
+                o = self.path.is_symlink()
+            self._is_symlink = o
+        return o
+
+    # noinspection PyBroadException
+    @property
+    def datetime_accessed(self) -> datetime:
+        o = self._datetime_accessed
+        if o is None:
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(self.stat.st_atime, tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(os.path.getatime(self.path), tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                msg = f"Could not get datetime_accessed for {self.path_str}"
+                logger().warning(msg)
+                self.add_error(msg)
+                o = datetime.min.astimezone(tz=timezone.utc)
+
+            self._datetime_accessed = o
+        return o
+
+    # noinspection PyBroadException
+    @property
+    def datetime_modified(self) -> datetime:
+        o = self._datetime_modified
+        if o is None:
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(self.stat.st_mtime, tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(os.path.getmtime(self.path), tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                msg = f"Could not get datetime_modified for {self.path_str}"
+                logger().warning(msg)
+                self.add_error(msg)
+                o = datetime.min.astimezone(tz=timezone.utc)
+
+            self._datetime_modified = o
+        return o
+
+    # noinspection PyBroadException
+    @property
+    def datetime_created(self) -> datetime:
+        o = self._datetime_created
+        if o is None:
+            try:
+                if RUNTIME_INFO.os in [OperatingSystem.WINDOWS, OperatingSystem.WINDOWS_CYGWIN]:
+                    o = datetime.fromtimestamp(self.stat.st_ctime, tz=timezone.utc)
+                else:
+                    try:
+                        o = datetime.fromtimestamp(self.stat.st_birthtime, tz=timezone.utc)
+                    except AttributeError:
+                        o = datetime.fromtimestamp(self.stat.st_mtime, tz=timezone.utc)
+            except Exception:
+                pass
+
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(self.stat.st_ctime, tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(self.stat.st_birthtime, tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(self.stat.st_mtime, tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                try:
+                    o = datetime.fromtimestamp(os.path.getctime(self.path), tz=timezone.utc)
+                except Exception:
+                    pass
+
+            if o is None:
+                msg = f"Could not get datetime_created for {self.path_str}"
+                logger().warning(msg)
+                self.add_error(msg)
+                o = datetime.min.astimezone(tz=timezone.utc)
+
+            self._datetime_created = o
+        return o
+
+    # noinspection PyBroadException
+    @property
+    def size(self) -> int:
+        o = self._size
+        if o is None:
+            try:
+                if self.is_file:
+                    o = self.stat.st_size
+                elif self.is_symlink:
+                    o = self.lstat.st_size
+                elif self.is_dir:
+                    o = self.stat.st_size
+            except Exception:
+                pass
+
+            if o is None or o < 0:
+                try:
+                    o = os.path.getsize(self.path)
+                except Exception:
+                    pass
+
+            if o is None or o < 0:
+                try:
+                    o = self.stat.st_size
+                except Exception:
+                    pass
+
+            if o is None or o < 0:
+                try:
+                    o = self.lstat.st_size
+                except Exception:
+                    pass
+
+            if o is None:
+                msg = f"Could not get size for {self.path_str}"
+                logger().warning(msg)
+                self.add_error(msg)
+                o = -1
+
+            self._size = o
+        return o
+
+    @property
+    def children(self) -> [FileSystemEntry]:
+        return self._snapshot.get_children(self)
+
+    @property
+    def parent(self) -> FileSystemEntry | None:
+        return self._snapshot.get_parent(self)
+
+    @property
+    def children_all(self) -> [FileSystemEntry]:
+        return self._snapshot.get_children_all(self)

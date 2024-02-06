@@ -4,7 +4,6 @@ import re
 from typing import List
 
 from src.mrs.mrs_common import ClassInfo, ClassLogging
-from src.mrs.mrs_gui import Window, WindowElementDirSelect, WindowElementCollapsible, WindowEvent
 
 import PySimpleGUI as sg
 

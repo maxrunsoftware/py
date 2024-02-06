@@ -1,37 +1,42 @@
+from __future__ import annotations
 
 from mrs.mrs_gui import *
-
-import logging
-
-from src import cmd_gui
-
-_log = logger(__name__)
+from src import cmd_gui, gui_sample
 
 
-def handle_scan(self, event: WindowEvent, directory: Path, is_recursive: bool):
-    self._log.debug(f"Handling scan [{is_recursive=}]: {directory}")
-    entries = fs_list(str(directory), recursive=is_recursive)
+def other():
 
-    for entry in entries:
-        s = "D" if entry.is_dir() else " "
-        s += " "
-        s += entry.path
-        print(s)
+    path = '/Users/user/dev'
+    fses = FileSystemEntrySnapshot()
+    fse = FileSystemEntry(path, snapshot=fses)
+    items = [fse]
+    items_children = fse.children_all
+    items.extend(items_children)
 
+    items.sort()
+    for entry in items:
+        if entry.is_file:
+            continue
 
+        type = ' '
+        if entry.is_dir:
+            type = 'D'
+        elif entry.is_symlink:
+            type = 'L'
 
-
+        print(f"[{type}] {entry}  {len(entry.children)}")
 
 
 def main():
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s %(levelname)-8s %(module)s.%(funcName)s %(filename)s:%(lineno)d [%(name)s]: %(message)s"
-    )
-
+    logging_setup()
+    _log = logger(__name__)
     RUNTIME_INFO.log_runtime_info(_log)
-    cmd_gui.run()
 
+    debug_test = True
+    if debug_test:
+        gui_sample.run()
+    else:
+        cmd_gui.run()
 
 
 if __name__ == '__main__':
