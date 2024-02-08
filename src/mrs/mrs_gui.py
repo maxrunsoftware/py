@@ -35,9 +35,42 @@ class WindowColor(str, Enum):
 
 
 class WindowKey(ClassInfo):
+
+    # region attributes
+
     DELIMITER: str = '.'
 
     _keys: dict[(str, ...), WindowKey | None] = dict()
+
+    # endregion attributes
+
+    # region @classmethod
+
+    @classmethod
+    def root_keys(cls) -> list[WindowKey]:
+        return [x for x in sorted(key for key in cls._keys if len(key) == 1)]
+
+    @classmethod
+    def all_keys(cls) -> list[WindowKey]:
+        return [x for x in sorted(key for key in cls._keys)]
+
+    @classmethod
+    def all_keys_str(cls) -> str:
+        if len(cls._keys) == 0:
+            return '!! No Keys Created !!'
+
+        items = [(('  ' * (len(x) - 1)) + x.name) for x in cls.all_keys()]
+        return '\n'.join(items)
+
+    @classmethod
+    def clear_keys(cls) -> int:
+        key_count = len(cls._keys)
+        cls._keys.clear()
+        return key_count
+
+    # endregion @classmethod
+
+    # region init
 
     def __init__(self, *args) -> None:
         super(WindowKey, self).__init__()
@@ -63,33 +96,26 @@ class WindowKey(ClassInfo):
         if parent_parts_casefold is not None and parent_parts_casefold not in self.__class__._keys:
             WindowKey(parent_parts_casefold)  # force parent key creation
 
-    # region classmethod
+    # endregion init
 
-    @classmethod
-    def root_keys(cls) -> list[WindowKey]:
-        return [x for x in sorted(key for key in cls._keys if len(key) == 1)]
+    # region method
 
-    @classmethod
-    def all_keys(cls) -> list[WindowKey]:
-        return [x for x in sorted(key for key in cls._keys)]
+    def is_descendant_of(self, parent: WindowKey) -> bool:
+        if len(parent) >= len(self):
+            return False
+        current = self
+        while current is not None:
+            if current == parent:
+                return True
+            current = current.parent
+        return False
 
-    @classmethod
-    def all_keys_str(cls) -> str:
-        if len(cls._keys) == 0:
-            return '!! No Keys Created !!'
+    def child(self, *args) -> WindowKey:
+        return WindowKey(self, *args)
 
-        items = [(('  ' * (len(x) - 1)) + x.name) for x in cls.all_keys()]
-        return '\n'.join(items)
+    # endregion method
 
-    @classmethod
-    def clear_keys(cls) -> int:
-        key_count = len(cls._keys)
-        cls._keys.clear()
-        return key_count
-
-    # endregion classmethod
-
-    # region property
+    # region @property
 
     @property
     def children(self) -> Iterable[WindowKey]:
@@ -120,24 +146,7 @@ class WindowKey(ClassInfo):
     def parts(self) -> tuple:
         return self._parts
 
-    # endregion property
-
-    # region method
-
-    def is_descendant_of(self, parent: WindowKey) -> bool:
-        if len(parent) >= len(self):
-            return False
-        current = self
-        while current is not None:
-            if current == parent:
-                return True
-            current = current.parent
-        return False
-
-    def child(self, *args) -> WindowKey:
-        return WindowKey(self, *args)
-
-    # endregion method
+    # endregion @property
 
     # region override
 
@@ -184,6 +193,9 @@ class WindowKey(ClassInfo):
 
 
 class WindowEvent:
+
+    # region init
+
     def __init__(self, window: Window, event: WindowKey | str | None, values: Dict[str, Any]):
         super(WindowEvent, self).__init__()
         self.window = window
@@ -214,11 +226,9 @@ class WindowEvent:
                     logger(cls=type(self)).warning(f"Item in event data not attached to WindowKey {k}={v}'")
         self.values = vals
 
-    def __str__(self):
-        return f"Key:{self.key}   Values:{self.values}"
+    # endregion init
 
-    def __getitem__(self, key: WindowKey) -> Optional[Any]:
-        return self.values[key] if key in self.values else None
+    # region method
 
     def matches(self, keys: Iterable[WindowKey]) -> bool:
         if self.key is None:
@@ -231,11 +241,283 @@ class WindowEvent:
 
         return False
 
+    # endregion method
 
-class ColumnCollapsable(sg.Column):
+    # region override
+
+    def __str__(self):
+        return f"Key:{self.key}   Values:{self.values}"
+
+    def __getitem__(self, key: WindowKey) -> Optional[Any]:
+        return self.values[key] if key in self.values else None
+
+    # endregion override
+
+
+class WindowEventHandler(ABC):
+    @abstractmethod
+    def handle_window_event(self, event: WindowEvent):
+        raise NotImplementedError
+
+
+class Window(ClassInfo, ClassLogging, sg.Window):
+
+    # region attributes
+
+    DEFAULT_INIT: dict[str, Any] = {
+        'font': ('Ariel', 12),
+        'resizable': True,
+    }
+
+    DEFAULT_OPTIONS: dict[str, Any] = {
+        'suppress_error_popups': True,
+        'suppress_raise_key_errors': False,
+        'suppress_key_guessing': True,
+        'warn_button_key_duplicates': True,
+    }
+
+    PSGWINDOW_ID_2_WINDOW: dict[int, Self] = {}
+
+    # endregion attributes
+
+    # region init
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **(self.__class__.DEFAULT_INIT | kwargs))
+        self.__class__.PSGWINDOW_ID_2_WINDOW[id(self)] = self
+
+        self._window_info_size: tuple[int | None, int | None] = (None, None)
+        self._window_info_location: tuple[int | None, int | None] = (None, None)
+        self._window_size_check_size: tuple[int | None, int | None] = (None, None)
+        self._event_handlers: list[Any] = []
+
+        self.key: WindowKey = WindowKey(f"{self._class_name}[{self._class_instance_id}]")
+        self.key_config: WindowKey = self.key.child('config')
+        self.key_config_size: WindowKey = self.key_config.child('size')
+        self.key_config_location: WindowKey = self.key_config.child('location')
+
+    # endregion init
+
+    # region @classmethod
+
+    @classmethod
+    def theme_background_color(cls) -> str:
+        return sg.theme_background_color()
+
+    @classmethod
+    def theme(cls, new_theme: str = None) -> str:
+        return sg.theme(new_theme=new_theme)
+
+    @classmethod
+    def set_options(cls, *args, **kwargs) -> None:
+        sg.set_options(*args, **(cls.DEFAULT_OPTIONS | kwargs))
+
+    # endregion @classmethod
+
+    # region @property
+
+    @property
+    def size(self) -> tuple[int | None, int | None]:
+        size = self.current_size_accurate()
+        if size[0] is None and size[1] is None:
+            return self.size
+        return size
+
+    @property
+    def location(self) -> tuple[int | None, int | None]:
+        loc = self.current_location(more_accurate=True)
+        if loc[0] is None and loc[1] is None:
+            return self.current_location(more_accurate=False)
+        return loc
+
+    # endregion @property
+
+    # region method
+
+    def run(self):
+        self.Finalize()
+        self._event_handlers.extend([x for x in self.AllKeysDict.values() if isinstance(x, WindowEventHandler)])
+        self._log.debug(f"Found {len(self._event_handlers)} event handlers")
+        self.BringToFront()
+        self.bind('<Configure>', self.key_config)
+
+        self._window_info_refresh()
+        self._check_window_size()
+
+        continue_loop: bool = True
+        while continue_loop:
+            continue_loop = self._run_loop()
+
+    def _run_loop(self) -> bool:
+        window_events: list[WindowEvent] = []
+
+        event, values = self.read()
+        window_event = WindowEvent(self, event, values)
+        self._log.debug(window_event)
+
+        if window_event.is_exit:
+            self._log.debug('Exiting...')
+            return False
+
+        window_events.append(window_event)
+
+        self._check_window_size()
+        window_info_changes = self._window_info_refresh()
+        window_events.extend([WindowEvent(self, x[0], values) for x in window_info_changes])
+
+        for window_event in window_events:
+            for i, event_handler in enumerate(self._event_handlers):
+                self._log.debug(f"Calling self._event_handlers[{i}]={event_handler} for event {window_event}")
+                event_handler.handle_window_event(window_event)
+
+        self._check_window_size()
+
+        return True
+
+    def _check_window_size(self):
+        if self.Resizable:
+            return
+
+        size_old_raw = self._window_size_check_size
+        size_old = (coalesce(size_old_raw[0], -1), coalesce(size_old_raw[1], -1))
+        size_new_raw = self.size
+        size_new = (coalesce(size_new_raw[0], -1), coalesce(size_new_raw[1], -1))
+
+        if size_new[0] > size_old[0] or size_new[1] > size_old[1]:
+            self._window_size_check_size = size_new_raw
+            self._log.debug(f"Locking window size to {size_new[0]} x {size_new[1]}  screensize={sg.Window.get_screen_size()}")
+            self.set_min_size(size_new)
+
+    def _window_info_refresh(self) -> list[tuple[WindowKey, Any | None, Any | None]]:
+        events: list[tuple[WindowKey, Any | None, Any | None]] = []
+
+        size_old = self._window_info_size
+        size_new = self.size
+        if size_old != size_new:
+            events.append((self.key_config_size, size_old, size_new))
+        self._window_info_size = size_new
+
+        location_old = self._window_info_location
+        location_new = self.location
+        if location_old != location_new:
+            events.append((self.key_config_location, location_old, location_new))
+        self._window_info_location = location_new
+
+        return events
+
+    # endregion method
+
+    # region override
+
+    def __getitem__(self, item):
+        try:
+            if item is None:
+                raise ValueError("Argument key cannot be None")
+            if not isinstance(item, WindowKey):
+                item = WindowKey(item)
+            element = self.AllKeysDict.get(item)
+            if element is not None:
+                return element
+
+            element = self.AllKeysDict.get(str(item))
+            if element is not None:
+                return element
+
+            all_keys = [k for k in self.AllKeysDict.keys()]
+            all_keys.sort(key=lambda k: type(k).__name__.casefold())
+            all_keys_str_list = [f"{k}  ({type(k).__name__})" for k in all_keys]
+            all_keys_str = "\n".join(all_keys_str_list)
+            raise KeyError(f"Window does not have element '{item}  ({type(item).__name__})' listing all keys:\n{all_keys_str}")
+
+        except KeyError as e:
+            self._log.exception("No key found", exc_info=e)
+            raise
+
+    # endregion override
+
+
+# region Elements
+
+
+class ElementBase(ClassInfo, ClassLogging, WindowEventHandler):
+    """
+    Mixin for use by other elements. This must be inherited FIRST to work correctly.
+    https://stackoverflow.com/a/50465583
+    """
+
+    # region init
+
+    def __init__(self, *args, **kwargs):
+        key = kwargs.get('key')
+        if key is None:
+            raise ValueError("argument 'key' is required")
+
+        if not isinstance(key, WindowKey):
+            raise ValueError(f"argument 'key' must be {WindowKey.__name__} but was instead {type(key).__name__} '{key}'")
+
+        if not isinstance(self, sg.Element):
+            raise ValueError(f"class {type(self).__name__} must inherit from {type(sg.Element).__name__}")
+
+        super().__init__(*args, **kwargs)  # forwards all unused arguments
+
+    # endregion init
+
+    # region @property
+
+    @property
+    def window(self) -> Window:
+        pf = getattr(self, 'ParentForm', None)
+        if pf is not None and isinstance(pf, Window):
+            return pf
+
+        pw = getattr(self, 'ParentWindow', None)
+        if pw is not None and isinstance(pw, Window):
+            return pw
+
+        if pf is not None and isinstance(pf, sg.Window):
+            w = Window.PSGWINDOW_ID_2_WINDOW.get(id(pf))
+            if w is not None:
+                return w
+
+        if pw is not None and isinstance(pw, sg.Window):
+            w = Window.PSGWINDOW_ID_2_WINDOW.get(id(pw))
+            if w is not None:
+                return w
+
+        if len(Window.PSGWINDOW_ID_2_WINDOW.values()) == 1:
+            # if we only have one window, it is probably the one we are looking for
+            return first(Window.PSGWINDOW_ID_2_WINDOW.values())
+
+        pf_str = 'None' if pf is None else f"{type(pf).__name__}"
+        pw_str = 'None' if pw is None else f"{type(pw).__name__}"
+
+        raise ValueError(
+            '   '.join(
+                [
+                    f"Could not retrieve Window.",
+                    f"ParentForm={pf_str}",
+                    f"ParentWindow={pw_str}",
+                    f"len(PSGWINDOW_ID_2_WINDOW)={len(Window.PSGWINDOW_ID_2_WINDOW.values())}",
+                ]
+            )
+        )
+
+    # endregion @property
+
+    # region override
+
+    def handle_window_event(self, event: WindowEvent):
+        raise NotImplementedError
+
+    # endregion override
+
+
+class ColumnCollapsable(ElementBase, sg.Column):
+
+    # region init
+
     def __init__(
         self,
-        get_window: Callable[[], sg.Window],
         key: WindowKey,
         layout: list[list[sg.Element]],
         title_text: str = None,
@@ -245,8 +527,6 @@ class ColumnCollapsable(sg.Column):
         *args,
         **kwargs
     ):
-        self._get_window = get_window
-
         self.arrow_up = arrow_up
         self.arrow_down = arrow_down
 
@@ -283,9 +563,13 @@ class ColumnCollapsable(sg.Column):
 
         super().__init__(layout=column_layout, *args, **kwargs)
 
-    def handle_event(self, event: WindowEvent):
+    # endregion init
+
+    # region override
+
+    def handle_window_event(self, event: WindowEvent):
         if event.matches([self.element_arrow.key, self.element_title.key, self.element_section.key]):
-            w = self._get_window()
+            w = self.window
             section = w[self.element_section.key]
             is_visible = section.visible
             section.update(visible=not section.visible)
@@ -299,14 +583,106 @@ class ColumnCollapsable(sg.Column):
             if hasattr(column, 'TKColFrame') and hasattr(column.TKColFrame, 'canvas'):
                 column.contents_changed()
 
+    # endregion override
 
-class ColumnBrowseDir(sg.Column):
-    @staticmethod
-    def get_input_background_color(browse_dir_event: WindowElementBrowseDirEvent) -> str:
-        color = sg.theme_text_element_background_color()
-        if trim(browse_dir_event.directory) is not None:
-            color = WindowColor.GREEN_LIGHT if browse_dir_event.is_valid else WindowColor.RED_LIGHT
-        return color
+
+class ButtonWindowEvent(ElementBase, sg.Button):
+
+    # region init
+
+    def __init__(
+        self,
+        key: WindowKey,
+        on_window_event: Callable[[WindowEvent], None],
+        *args,
+        **kwargs
+    ):
+        self.on_window_event = on_window_event
+        kwargs['key'] = key
+
+        super().__init__(*args, **kwargs)
+
+    # endregion init
+
+    # region override
+
+    def handle_window_event(self, event: WindowEvent):
+        self.on_window_event(event)
+
+    # endregion override
+
+
+class ColumnBrowseDir(ElementBase, sg.Column):
+
+    # region init
+
+    def __init__(
+        self,
+        key: WindowKey,
+        label_text: str = 'Directory',
+        show_recursive_checkbox: bool = False,
+        show_resolve_button: bool = False,
+        default_directory: str | Path | None = None,
+        default_recursive_checked: bool = False,
+        input_background_color_valid: str | None = WindowColor.GREEN_LIGHT,
+        input_background_color_invalid: str | None = WindowColor.RED_LIGHT,
+        *args,
+        **kwargs
+    ):
+        self.show_recursive_checkbox = show_recursive_checkbox
+        self.show_resolve_button = show_resolve_button
+        self.input_background_color_valid = input_background_color_valid
+        self.input_background_color_invalid = input_background_color_invalid
+
+        default_directory_str = self._parse_path_resolve_str(default_directory)
+        default_directory_str = str(default_directory or '')
+
+        self.element_label = sg.Text(
+            label_text,
+            key=key.child('label'),
+            size=(8, 1),
+            justification='right',
+        )
+
+        self.element_input = sg.Input(
+            key=key.child('input'),
+            enable_events=True,
+            text_color=WindowColor.BLACK,
+            background_color=self._parse_input_background_color(default_directory_str),
+            default_text='' if default_directory_str is None else default_directory_str,
+        )
+
+        self.element_resolve = sg.Button(
+            key=key.child('resolve'),
+            button_text='Resolve',
+            visible=self.show_resolve_button
+        )
+
+        self.element_browse = sg.FolderBrowse(
+            button_text='Browse',
+            key=key.child('browse'),
+            target=str(self.element_input.key),  # https://github.com/PySimpleGUI/PySimpleGUI/issues/6260
+            initial_folder=default_directory_str,
+        )
+
+        self.element_recursive = sg.Checkbox(
+            text='Recursive',
+            key=key.child('recursive'),
+            visible=self.show_recursive_checkbox,
+            default=default_recursive_checked,
+        )
+
+        column_layout = [[self.element_label, self.element_input, self.element_resolve, self.element_browse, self.element_recursive]]
+
+        kwargs['key'] = key
+        if 'expand_x' not in kwargs:
+            kwargs['expand_x'] = True
+
+        super().__init__(layout=column_layout, *args, **kwargs)
+
+    # endregion init
+
+    # region @classmethod
 
     @classmethod
     def _parse_path(cls, path: str | None) -> Path | None:
@@ -314,27 +690,18 @@ class ColumnBrowseDir(sg.Column):
             return None
 
         p = None
-        p_a = None
-        p_r = None
 
         try:
             p = Path(path)
         except Exception:
+            return None
+
+        try:
+            return p.expanduser().resolve()
+        except Exception:
             pass
 
-        if p is not None:
-            try:
-                p_a = p.absolute()
-            except Exception:
-                pass
-
-            if p_a is not None:
-                try:
-                    p_r = p_a.resolve()
-                except Exception:
-                    pass
-
-        return coalesce(p_r, p_a, p)
+        return p
 
     @classmethod
     def _parse_is_valid(cls, path: str | None) -> bool | None:
@@ -361,73 +728,9 @@ class ColumnBrowseDir(sg.Column):
 
         return str(p)
 
-    def __init__(
-        self,
-        get_window: Callable[[], sg.Window],
-        key: WindowKey,
-        label_text: str = 'Directory',
-        show_recursive_checkbox: bool = False,
-        default_directory: str | Path | None = None,
-        default_recursive_checked: bool = False,
-        input_background_color_valid: str | None = WindowColor.GREEN_LIGHT,
-        input_background_color_invalid: str | None = WindowColor.RED_LIGHT,
-        *args,
-        **kwargs
-    ):
-        self._get_window = get_window
-        self.show_recursive_checkbox = show_recursive_checkbox
-        self.input_background_color_valid = input_background_color_valid
-        self.input_background_color_invalid = input_background_color_invalid
+    # endregion @classmethod
 
-        default_directory_str = self._parse_path_resolve_str(default_directory)
-        default_directory_str = str(default_directory or '')
-
-        self.element_label = sg.Text(
-            label_text,
-            key=key.child('label'),
-            size=(8, 1),
-            justification='right',
-        )
-
-        self.element_input = sg.Input(
-            key=key.child('input'),
-            enable_events=True,
-            text_color=WindowColor.BLACK,
-            background_color=self._parse_input_background_color(default_directory_str),
-            default_text='' if default_directory_str is None else default_directory_str,
-        )
-
-        self.element_resolve = sg.Button(
-            key=key.child('resolve'),
-            button_text='Resolve',
-            enable_events=True,
-        )
-
-        self.element_browse = sg.FolderBrowse(
-            button_text='Browse',
-            key=key.child('browse'),
-            target=str(self.element_input.key),  # https://github.com/PySimpleGUI/PySimpleGUI/issues/6260
-            initial_folder=default_directory_str,
-        )
-
-        self.element_recursive = sg.Checkbox(
-            text='Recursive',
-            key=key.child('recursive'),
-            visible=show_recursive_checkbox,
-            default=default_recursive_checked,
-        )
-
-        column_layout = [[self.element_label, self.element_input, self.element_resolve, self.element_browse, self.element_recursive]]
-
-        kwargs['key'] = key
-        if 'expand_x' not in kwargs:
-            kwargs['expand_x'] = True
-
-        super().__init__(layout=column_layout, *args, **kwargs)
-
-    @property
-    def _window(self) -> sg.Window | None:
-        return self._get_window()
+    # region method
 
     def _parse_input_background_color(self, path: str | None) -> str:
         is_valid = self._parse_is_valid(path)
@@ -438,9 +741,13 @@ class ColumnBrowseDir(sg.Column):
         else:
             return self.input_background_color_invalid
 
+    # endregion method
+
+    # region @property
+
     @property
     def value_dir_str(self) -> str:
-        return self._window[self.element_input.key].get()
+        return self.window[self.element_input.key].get()
 
     @value_dir_str.setter
     def value_dir_str(self, value):
@@ -448,7 +755,7 @@ class ColumnBrowseDir(sg.Column):
             value = ''
         else:
             value = str(value)
-        self._window[self.element_input.key].update(value=value)
+        self.window[self.element_input.key].update(value=value)
 
     @property
     def value_dir(self) -> Path | None:
@@ -462,27 +769,44 @@ class ColumnBrowseDir(sg.Column):
     def value_is_recursive(self) -> bool:
         if not self.show_recursive_checkbox:
             return False
-        w = self._get_window()
+        w = self.window
         recursive = w[self.element_recursive.key]
         return recursive.get()
 
-    def handle_event(self, event: WindowEvent):
-        w = self._get_window()
+    # endregion @property
+
+    # region override
+
+    def handle_window_event(self, event: WindowEvent):
+        w = self.window
 
         # update recursive checkbox visibility if changed
         recursive = w[self.element_recursive.key]
         if self.show_recursive_checkbox != recursive.visible:
             recursive.update(visible=self.show_recursive_checkbox)
 
-        if event.matches([self.element_input.key, self.element_recursive.key]):
+        # update resolve button visibility if changed
+        resolve = w[self.element_resolve.key]
+        if self.show_resolve_button != resolve.visible:
+            resolve.update(visible=self.show_resolve_button)
+
+        if event.matches([self.element_input.key]):
             c = self._parse_input_background_color(self.value_dir_str)
             w[self.element_input.key].update(background_color=c)
 
         if event.matches([self.element_resolve.key]):
-            self.value_dir_str = self._parse_path_resolve_str(self.value_dir_str)
+            p = self.value_dir_str
+            pp = self._parse_path_resolve_str(p)
+            self._log.debug(f"Resolving Path: {p}  to  {pp}")
+            self.value_dir_str = pp
+
+    # endregion override
 
 
 class TreeRow:
+
+    # region init
+
     def __init__(
         self,
         parent: str | int | tuple | Self | object | None = None,
@@ -495,8 +819,9 @@ class TreeRow:
         self.icon = icon
         self.values: list[Any] = [] if args is None else [x for x in args]
 
-    def __str__(self):
-        return f"{self.__class__.__name__}(parent={self.parent}, key={self.key}, values={self.values}, icon=len({len(self.icon)}))"
+    # endregion init
+
+    # region method
 
     def insert(self, tree_data: sg.TreeData):
         parent = self.parent
@@ -524,18 +849,28 @@ class TreeRow:
             icon=icon,
         )
 
+    # endregion method
 
-class Tree(sg.Tree):
+    # region override
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(parent={self.parent}, key={self.key}, values={self.values}, icon=len({len(self.icon)}))"
+
+    # endregion override
+
+
+class Tree(ElementBase, sg.Tree):
+
+    # region init
+
     def __init__(
         self,
-        get_window: Callable[[], sg.Window],
         key: str | object,
         column_names: Iterable[str],
         rows: list[TreeRow] | None = None,
         *args,
         **kwargs
     ):
-        self._get_window = get_window
         column_names_list = [x for x in column_names]
         self._column_names = tuple(column_names_list)
         self._column_visibility: dict[int, bool] = {c: True for c in range(len(column_names_list))}
@@ -575,9 +910,9 @@ class Tree(sg.Tree):
 
         super().__init__(*args, **kwargs)
 
-    @property
-    def _self_elementz(self) -> Self:
-        return
+    # endregion init
+
+    # region method
 
     def _get_column_index(self, name: str) -> int | None:
         if name == '#0':
@@ -588,15 +923,11 @@ class Tree(sg.Tree):
             i = self._columns_name_2_index.get(name)
         return i
 
-    @property
-    def column_names(self) -> tuple[str, ...]:
-        return self._column_names
-
     def data_refresh(self):
         td = sg.TreeData()
         for row in self.rows:
             row.insert(td)
-        self._get_window()[self.key].update(values=td)
+        self.window[self.key].update(values=td)
 
     def set_column_sizes(self, column_sizes: dict[str | int, int]) -> None:
         column_sizes_int: dict[int, int | bool] = self._column_visibility.copy()
@@ -635,7 +966,7 @@ class Tree(sg.Tree):
             else:
                 raise ValueError(f"Column type {type(v).__name__} with value {v} for index {i} was not expected")
 
-        widget = self._get_window()[self.key].Widget
+        widget = self.window[self.key].Widget
         widget.configure(displaycolumns=displayed_columns)
         self._column_visibility = column_visibility_new
 
@@ -647,240 +978,25 @@ class Tree(sg.Tree):
         # _log.debug(f"{self_name}.Widget.pack(side='left', fill='both', expand=True)")
         widget.pack(side='left', fill='both', expand=True)
 
+    # endregion method
 
-class Window(ClassInfo, ClassLogging):
-
-    def __init__(self):
-        super(Window, self).__init__()
-        self.layout: List[Any] = []
-        self.title: str | None = None
-        self._subscribers: Dict[WindowKey, List[Callable[WindowEvent]]] = {}
-        # self._subscribers_exit: List[Callable[WindowEvent]] = []
-        self.font: str = 'Ariel'
-        self.font_size: int = 12
-        self.resizable: bool = True
-        self._pysimplegui_window: sg.Window | None = None
-        self._window_size_check_size: tuple[int | None, int | None] = (None, None)
-        self._key: WindowKey = WindowKey(f"{self._class_name}[{self._class_instance_id}]")
-        self._key_config: WindowKey = self._key.child('config')
-        self._key_config_size: WindowKey = self._key_config.child('size')
-        self._key_config_location: WindowKey = self._key_config.child('location')
-        self.handler_before: Callable[WindowEvent] | None = None
-        self.handler_after: Callable[WindowEvent] | None = None
-        self._window_info_size: tuple[int | None, int | None] = (None, None)
-        self._window_info_location: tuple[int | None, int | None] = (None, None)
+    # region @property
 
     @property
-    def key(self) -> WindowKey:
-        return self._key
+    def column_names(self) -> tuple[str, ...]:
+        return self._column_names
 
-    @property
-    def key_config(self) -> WindowKey:
-        return self._key_config
+    # endregion @property
 
-    @property
-    def key_config_size(self) -> WindowKey:
-        return self._key_config_size
+    # region override
 
-    @property
-    def key_config_location(self) -> WindowKey:
-        return self._key_config_location
+    def handle_window_event(self, event: WindowEvent):
+        pass
 
-    @property
-    def background_color(self) -> str:
-        return sg.theme_background_color()
-
-    @property
-    def theme(self) -> str:
-        return sg.theme()
-
-    @theme.setter
-    def theme(self, value):
-        sg.theme(value)
-
-    def subscribe(self, key: WindowKey | [WindowKey], handler: Callable[WindowEvent]):
-        keys: [WindowKey] = key if isinstance(key, list) else [key]
-        for k in keys:
-            if k not in self._subscribers:
-                self._subscribers[k] = []
-            self._log.debug(f"Adding subscriber for event {k} -> {handler}")
-            self._subscribers[k].append(handler)
-
-    def start(self):
-        if self.title is None:
-            self.title = ' '.join(split_on_capital(self.class_name))
-
-        sg.theme(self.theme)
-        sg.set_options(
-            suppress_error_popups=True,
-            suppress_raise_key_errors=False,
-            suppress_key_guessing=True,
-            warn_button_key_duplicates=True,
-        )
-
-        self._pysimplegui_window = w = sg.Window(
-            title=self.title,
-            layout=self.layout,
-            font=(self.font, self.font_size),
-            resizable=self.resizable,
-        )
-        w.Finalize()
-        w.BringToFront()
-        w.bind('<Configure>', self.key_config)
-
-        self._window_info_refresh()
-
-        self._check_window_size()
-
-        continue_loop: bool = True
-        while continue_loop:
-            continue_loop = self._start_loop()
-
-    @property
-    def size(self) -> tuple[int | None, int | None]:
-        size = self._pysimplegui_window.current_size_accurate()
-        if size[0] is None and size[1] is None:
-            return self._pysimplegui_window.size
-        return size
-
-    @property
-    def location(self) -> tuple[int | None, int | None]:
-        loc = self._pysimplegui_window.current_location(more_accurate=True)
-        if loc[0] is None and loc[1] is None:
-            return self._pysimplegui_window.current_location(more_accurate=False)
-        return loc
-
-    def _start_loop(self) -> bool:
-        # self._pysimplegui_window[self.key.sub('dir', 'FileList', 'section_column')].Widget.configure(width=1000)
-        # self._pysimplegui_window[self.key.sub('dir', 'FileList', 'Tree')].Widget.configure(width=1000)
-
-        window_events: list[WindowEvent] = []
-
-        event, values = self._pysimplegui_window.read()
-        window_event = WindowEvent(self, event, values)
-        self._log.debug(window_event)
-        if window_event.is_exit:
-            self._log.debug('Exiting...')
-            return False
-        window_events.append(window_event)
-
-        self._check_window_size()
-        window_info_changes = self._window_info_refresh()
-        window_events.extend([WindowEvent(self, x[0], values) for x in window_info_changes])
-
-        for window_event in window_events:
-            handler = self.handler_before
-            if handler is not None:
-                handler(window_event)
-                self._check_window_size()
-
-            if window_event.key in self._subscribers:
-                subscribers = self._subscribers[window_event.key]
-                self._log.debug(f"Calling {len(subscribers)} subscribers for event {window_event}")
-                for i, subscriber in enumerate(subscribers):
-                    self._log.debug(f"Calling subscribers[{i}] for event {window_event} -> {subscriber}")
-                    subscriber(window_event)
-            else:
-                if window_event.key is not None and (window_event.key == self.key_config or window_event.key.is_descendant_of(self.key_config)):
-                    self._log.debug(f"No subscriber for event {window_event}")
-                else:
-                    self._log.warning(f"No subscriber for event {window_event}")
-
-            handler = self.handler_after
-            if handler is not None:
-                handler(window_event)
-                self._check_window_size()
-
-        return True
-
-    def _check_window_size(self):
-        if self.resizable:
-            return
-
-        size_old_raw = self._window_size_check_size
-        size_old = (coalesce(size_old_raw[0], -1), coalesce(size_old_raw[1], -1))
-        size_new_raw = self.size
-        size_new = (coalesce(size_new_raw[0], -1), coalesce(size_new_raw[1], -1))
-
-        if size_new[0] > size_old[0] or size_new[1] > size_old[1]:
-            self._window_size_check_size = size_new_raw
-            self._log.debug(f"Locking window size to {size_new[0]} x {size_new[1]}  screensize={sg.Window.get_screen_size()}")
-            self._pysimplegui_window.set_min_size(size_new)
-
-    def _window_info_refresh(self) -> list[tuple[WindowKey, Any | None, Any | None]]:
-        events: list[tuple[WindowKey, Any | None, Any | None]] = []
-
-        size_old = self._window_info_size
-        size_new = self.size
-        if size_old != size_new:
-            events.append((self.key_config_size, size_old, size_new))
-        self._window_info_size = size_new
-
-        location_old = self._window_info_location
-        location_new = self.location
-        if location_old != location_new:
-            events.append((self.key_config_location, location_old, location_new))
-        self._window_info_location = location_new
-
-        return events
-
-    @property
-    def name(self) -> str:
-        return f"{self.class_instance_name}({self.title})"
-
-    def get_element(self, key: Any) -> sg.Element:
-        try:
-            if key is None:
-                raise ValueError("Argument key cannot be None")
-            if not isinstance(key, WindowKey):
-                key = WindowKey(key)
-            element = self._pysimplegui_window.AllKeysDict.get(key)
-            if element is not None:
-                return element
-
-            element = self._pysimplegui_window.AllKeysDict.get(str(key))
-            if element is not None:
-                return element
-
-            all_keys = [k for k in self._pysimplegui_window.AllKeysDict.keys()]
-            all_keys.sort(key=lambda k: type(k).__name__.casefold())
-            all_keys_str_list = [f"{k}  ({type(k).__name__})" for k in all_keys]
-            all_keys_str = "\n".join(all_keys_str_list)
-            raise KeyError(f"Window does not have element '{key}  ({type(key).__name__})' listing all keys:\n{all_keys_str}")
-
-        except KeyError as e:
-            self._log.exception("No key found", exc_info=e)
-            raise
+    # endregion override
 
 
-class WindowElementBrowseDirEvent(NamedTuple):
-    key: WindowKey
-    is_recursive: bool
-    directory: str
-    directory_path: Path | None
-    is_valid: bool
-
-    @staticmethod
-    def create(key: WindowKey, directory: str | Path | None = None, is_recursive: bool | None = False) -> WindowElementBrowseDirEvent:
-        if is_recursive is None:
-            is_recursive = False
-        d: str = ''
-        dp: Path | None = None
-        if trim(directory) is not None:
-            if isinstance(directory, Path):
-                d = str(directory)
-                dp = directory
-            elif isinstance(directory, str):
-                d = directory
-                dp = Path(directory)
-        iv: bool = dp is not None and dp.exists() and dp.is_dir()
-        return WindowElementBrowseDirEvent(
-            key=key,
-            is_recursive=is_recursive,
-            directory=d,
-            directory_path=dp,
-            is_valid=iv,
-        )
+# endregion Elements
 
 
 def window_element_theme_sample_list(

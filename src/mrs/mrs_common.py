@@ -156,6 +156,10 @@ def url_join(*args: Any | None) -> str | None:
     return trim(args_new)
 
 
+def first(iterable: Iterable[Any]) -> Any:
+    next((x for x in iterable), None)
+
+
 def xstr(s):
     if s is None:
         return ''
@@ -960,8 +964,8 @@ class ClassInfo:
         s.class_instance_id
     ) + '}'
 
-    def __init__(self):
-        super(ClassInfo, self).__init__()
+    def __init__(self, *args, **kwargs) -> None:
+        # super(ClassInfo, self).__init__()
 
         if not hasattr(self, '_class_name'):
             self._class_name: str = parse_class_name(self)
@@ -971,6 +975,8 @@ class ClassInfo:
 
         if not hasattr(self, '_class_instance_id'):
             self._class_instance_id: int = next_int(name=self.class_name)
+
+        super().__init__(*args, **kwargs)
 
     @property
     def class_name(self) -> str:
@@ -1003,10 +1009,11 @@ TLogger = TypeVar('TLogger', bound=Union[Logger, LoggerAdapter])
 class ClassLogging:
     _LOG_EXTRA_NAMES: List[str] = ['module_name', 'class_name', 'class_instance_id']
 
-    def __init__(self):
-        super(ClassLogging, self).__init__()
+    def __init__(self, *args, **kwargs) -> None:
+        # super(ClassLogging, self).__init__()
         if not hasattr(self, '_log_lazy'):
             self._log_lazy = LazyAttribute[TLogger](lambda: self._log_create())
+        super().__init__(*args, **kwargs)
 
     def _log_create(self) -> TLogger:
         extra = {}

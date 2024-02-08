@@ -1,6 +1,3 @@
-import json
-import pprint
-
 from src.mrs.mrs_gui import *
 
 # noinspection PyPep8Naming
@@ -18,8 +15,6 @@ def run():
         warn_button_key_duplicates=True,
     )
 
-    w: sg.Window | None = None
-    get_window = lambda: w
     window_key = WindowKey('window1')
 
     r = TreeRow
@@ -35,11 +30,9 @@ def run():
     ]
 
     c_files = ColumnCollapsable(
-        get_window=get_window,
         key=window_key.child('files'),
         background_color=WindowColor.GREEN_LIGHT,
         layout=[[Tree(
-            get_window=get_window,
             key=window_key.child('files', 'tree'),
             column_names=['Text', 'V1', 'V2', 'V3', 'V4'],
             rows=data,
@@ -56,11 +49,9 @@ def run():
     )
 
     c_files2 = ColumnCollapsable(
-        get_window=get_window,
         key=window_key.child('files2'),
         background_color=WindowColor.GREEN_LIGHT,
         layout=[[Tree(
-            get_window=get_window,
             key=window_key.child('files2', 'tree'),
             column_names=['Text', 'V1', 'V2', 'V3', 'V4'],
             rows=data,
@@ -77,14 +68,13 @@ def run():
     )
 
     c_browsedir = ColumnBrowseDir(
-        get_window=get_window,
         key=window_key.child('browsedir'),
         show_recursive_checkbox=True,
         default_directory='~/temp',
         default_recursive_checked=True,
     )
 
-    w = sg.Window(
+    w = Window(
         title='SampleWindow',
         layout=[
             [c_files],
@@ -96,25 +86,9 @@ def run():
         size=(800, 600),
     )
 
-    w.Finalize()
-    w.BringToFront()
-    w.bind('<Configure>', '_config_change_')
+    # w.Finalize()
+    # w.BringToFront()
+    # w.bind('<Configure>', '_config_change_')
 
-    while True:
-        event, values = w.read()
-        we = WindowEvent(w, event, values)
-        if we.is_exit:
-            break
-
-        values_str = pprint.pformat(values, indent=4, width=-1)
-        values_str = '{ }' if values is None else json.dumps({str(k): v for k, v in values.items()}, indent=4)
-        print(f"\"{event}\": {values_str}")
-        print('')
-
-        c_files.handle_event(we)
-        c_files2.handle_event(we)
-        # column.expand(False, True, False)
-        # section_column.expand(True, True, False)
-        # tree.expand(True, True, False)
-
+    w.run()
     w.close()

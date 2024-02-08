@@ -173,7 +173,7 @@ def run():
         expand = 'x'
         expand_x = True
         expand_y = False
-        for k, ele in window._pysimplegui_window.key_dict.items():
+        for k, ele in window._psgwindow.key_dict.items():
             _log.debug(f"Resizing: {k}")
             try:
                 if hasattr(ele, 'Widget') and ele.Widget is not None and hasattr(ele.Widget, 'expand'):
