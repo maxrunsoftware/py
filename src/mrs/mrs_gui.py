@@ -38,9 +38,9 @@ class WindowKey(ClassInfo):
 
     # region attributes
 
-    DELIMITER: str = '.'
+    _DELIMITER: str = '.'
 
-    _keys: dict[(str, ...), WindowKey | None] = dict()
+    _KEYS: dict[str, WindowKey] = dict()
 
     # endregion attributes
 
@@ -48,70 +48,104 @@ class WindowKey(ClassInfo):
 
     @classmethod
     def root_keys(cls) -> list[WindowKey]:
-        return [x for x in sorted(key for key in cls._keys if len(key) == 1)]
+        return [x for x in sorted(key for key in cls._KEYS.values() if key is not None and len(key.parts) == 1)]
 
     @classmethod
     def all_keys(cls) -> list[WindowKey]:
-        return [x for x in sorted(key for key in cls._keys)]
+        return [x for x in sorted(key for key in cls._KEYS.values())]
 
     @classmethod
     def all_keys_str(cls) -> str:
-        if len(cls._keys) == 0:
+        if len(cls._KEYS) == 0:
             return '!! No Keys Created !!'
 
-        items = [(('  ' * (len(x) - 1)) + x.name) for x in cls.all_keys()]
+        items = [(('  ' * (len(x.parts) - 1)) + x.name) for x in cls.all_keys()]
         return '\n'.join(items)
-
-    @classmethod
-    def clear_keys(cls) -> int:
-        key_count = len(cls._keys)
-        cls._keys.clear()
-        return key_count
 
     # endregion @classmethod
 
+    # region new
+
+    def __new__(cls, *args, **kwargs):
+        # micro optimizations to not have to re-create some keys
+        if isinstance(args, tuple):
+            arg_parts: list[str] = []
+
+            for arg in args:
+
+                if arg is None:
+                    continue
+
+                if isinstance(arg, sg.Element):
+                    arg = arg.key
+
+                if isinstance(arg, WindowKey):
+                    arg_parts.extend(arg._parts_casefold)
+                elif isinstance(arg, str):
+                    arg = trim(arg)
+                    if arg is not None:
+                        arg_parts.append(arg.casefold())
+                else:
+                    # encountered invalid type, use regular __init__
+                    arg_parts.clear()
+                    break
+
+            if len(arg_parts) > 0:
+                existing_key = cls._KEYS.get(cls._DELIMITER.join(arg_parts))
+                if existing_key is not None:
+                    return existing_key
+
+        return super().__new__(cls)
+
+    # endregion new
+
     # region init
 
-    def __init__(self, *args) -> None:
-        super(WindowKey, self).__init__()
+    def __init__(self, *args: Any, **kwargs) -> None:
+        super().__init__(*tuple([]), **kwargs)  # forwards all unused arguments
+
         assert isinstance(args, tuple)
 
         def iterable_flatten_parser(item):
-            return item.parts if item is not None and isinstance(item, WindowKey) else item
+            if item is None:
+                return item
+            if isinstance(item, sg.Element):
+                item = item.key
+            if isinstance(item, WindowKey):
+                return item.parts
+            if isinstance(item, str) and self.__class__._DELIMITER in item:
+                return split(self.__class__._DELIMITER, item)
 
-        parts: list[str] = trim(xstr(iterable_flatten(args, iterable_flatten_parser)), exclude_none=True)
+            return item
 
-        if len(parts) == 0:
+        key_parts: list[str] = trim(xstr(iterable_flatten(args, iterable_flatten_parser)), exclude_none=True)
+
+        if len(key_parts) == 0:
             raise ValueError('No name or key parts provided')
 
-        self._parts: tuple[str, ...] = tuple(parts)
-        parts_casefold = tuple([x.casefold() for x in parts])
-        self._parts_casefold: tuple[str, ...] = parts_casefold
-        self._hash = hash(parts_casefold)
+        self._parts: tuple[str, ...] = tuple(key_parts)
+        self._str: str = self._DELIMITER.join(self.parts)
 
-        parent_parts_casefold = None if len(parts) < 2 else parts_casefold[:-1]
-        self._parent_parts_casefold: tuple[str, ...] | None = parent_parts_casefold
-        self.__class__._keys[parts_casefold] = self
+        self._parts_casefold: tuple[str, ...] = tuple([x.casefold() for x in key_parts])
+        self._str_casefold: str = self._str.casefold()
+        self._hash = hash(self._str_casefold)
 
-        if parent_parts_casefold is not None and parent_parts_casefold not in self.__class__._keys:
-            WindowKey(parent_parts_casefold)  # force parent key creation
+        self.__class__._KEYS[self._str_casefold] = self
+        self._parent_parts_casefold: tuple[str, ...] | None = None if len(key_parts) < 2 else self._parts_casefold[:-1]
+        if self._parent_parts_casefold is not None and self._parent_parts_casefold not in self.__class__._KEYS:
+            WindowKey(self._parts[:-1])
 
     # endregion init
 
     # region method
 
-    def is_descendant_of(self, parent: WindowKey) -> bool:
-        if len(parent) >= len(self):
-            return False
-        current = self
-        while current is not None:
-            if current == parent:
-                return True
-            current = current.parent
-        return False
+    def is_descendant_of(self, *args, **kwargs) -> bool:
+        assert isinstance(args, tuple)
+        parent: WindowKey = WindowKey(*args, **kwargs)
+        return self._str_casefold.startswith(parent._str_casefold + self.__class__._DELIMITER)
 
-    def child(self, *args) -> WindowKey:
-        return WindowKey(self, *args)
+    def child(self, *args, **kwargs) -> WindowKey:
+        return WindowKey(self, *args, **kwargs)
 
     # endregion method
 
@@ -119,24 +153,15 @@ class WindowKey(ClassInfo):
 
     @property
     def children(self) -> Iterable[WindowKey]:
-        self_len = len(self)
-        self_parts = self._parts_casefold
-        for item in sorted(
-                child_key for child_key in self.__class__._keys.values() if
-                len(child_key) == self_len + 1 and
-                child_key._parent_parts_casefold == self_parts
-        ):
-            yield item
+        prefix = self._str_casefold + self.__class__._DELIMITER
+        return sorted(x for x in self.__class__._KEYS.values() if x._str_casefold.startswith(prefix))
 
     @property
     def parent(self) -> WindowKey | None:
         parent_parts_casefold = self._parent_parts_casefold
         if parent_parts_casefold is None:
             return None
-        parent = self.__class__._keys.get(parent_parts_casefold)
-        if parent is None:
-            self.__class__._keys[parent_parts_casefold] = parent = WindowKey(parent_parts_casefold)
-        return parent
+        return WindowKey(parent_parts_casefold)
 
     @property
     def name(self) -> str:
@@ -150,9 +175,6 @@ class WindowKey(ClassInfo):
 
     # region override
 
-    def __len__(self):
-        return len(self._parts)
-
     def __eq__(self, other):
         if other is None:
             return False
@@ -160,34 +182,39 @@ class WindowKey(ClassInfo):
             other = trim(other)
             if other is None:
                 return False
+            return self._str_casefold == other.casefold()
+
         if not isinstance(other, WindowKey):
             return self.__eq__(WindowKey(other))
-        return self._hash == other._hash and self._parts_casefold == other._parts_casefold
+
+        return self._hash == other._hash and self._str_casefold == other._str_casefold
 
     def __hash__(self):
         return self._hash
 
     def __str__(self):
-        return self.DELIMITER.join(self._parts)
+        return self._str
 
     def __repr__(self):
-        return f"{self.class_name}({self._parts})"
+        return f"{self.class_name}{self._parts}"
 
     def __lt__(self, other):
         if other is None:
             return False
         if not isinstance(other, WindowKey):
             return self.__lt__(WindowKey(other))
-        parts_x = self._parts_casefold
-        parts_y = other._parts_casefold
-        len_x = len(parts_x)
-        len_y = len(parts_y)
-        for i in range(min(len_x, len_y)):
-            if parts_x[i] < parts_y[i]:
+
+        # quick equality check
+        if self._hash == other._hash and self._str_casefold == other._str_casefold:
+            return False
+
+        for x, y in zip(self._parts_casefold, other._parts_casefold):
+            if x < y:
                 return True
-            if parts_x[i] > parts_y[i]:
+            if x > y:
                 return False
-        return len_x < len_y
+
+        return len(self._parts_casefold) < len(other._parts_casefold)
 
     # endregion override
 
@@ -213,7 +240,7 @@ class WindowEvent:
                 return None
             return WindowKey(s)
 
-        self.key: WindowKey | None = parse_key(event)
+        self.key: WindowKey | None = None if event is None else WindowKey(event)
         self.values_raw = values
 
         vals: Dict[WindowKey, Any] = {}
@@ -230,20 +257,16 @@ class WindowEvent:
 
     # region method
 
-    def matches(self, *args: WindowKey) -> bool:
-        if self.key is None:
-            return False
+    def matches(self, *args: WindowKey | sg.Element) -> bool:
+        assert isinstance(args, tuple)
 
-        if args is None or len(args) == 0:
+        key = self.key
+        if key is None or args is None or len(args) == 0:
             return False
-
-        k = self.key
-        if isinstance(args, WindowKey):
-            return k == args
 
         for arg in args:
-            assert isinstance(arg, WindowKey)
-            if k == arg:
+            arg = WindowKey(arg)
+            if arg == key:
                 return True
 
         return False
@@ -262,6 +285,7 @@ class WindowEvent:
 
 
 class WindowEventHandler(ABC):
+
     # region init
 
     def __init__(self, *args, **kwargs):
@@ -279,28 +303,35 @@ class WindowEventHandler(ABC):
     # endregion method
 
 
-class WindowEventCallback(ClassInfo, ClassLogging, WindowEventHandler):
+class WindowEventHandlerImpl(ClassInfo, ClassLogging, WindowEventHandler):
 
     # region init
 
     def __init__(
         self,
-        keys: Iterable[WindowKey],
+        keys: Iterable[WindowKey | sg.Element],
         callback: Callable[[WindowEvent]],
         *args,
         **kwargs
     ):
         self.callback = callback
         super().__init__(*args, **kwargs)  # forwards all unused arguments
-        self.listening_for_keys.update([key for key in keys])
+        keys_list = []
+        for key in keys:
+            if key is not None:
+                keys_list.append(WindowKey(key))
+
+        self.listening_for_keys.update(keys_list)
 
     # endregion init
 
     # region override
 
     def handle_window_event(self, event: WindowEvent):
-        if event.key in self.listening_for_keys:
-            self.callback(event)
+        listening_for_keys = self.listening_for_keys
+        if listening_for_keys is not None:
+            if len(listening_for_keys) == 0 or event.key in listening_for_keys:
+                self.callback(event)
 
     # endregion override
 
@@ -327,7 +358,13 @@ class Window(ClassInfo, ClassLogging, sg.Window):
 
     # region init
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(
+        self,
+        key: WindowKey = None,
+        event_handlers: list[WindowEventHandler] = None,
+        *args,
+        **kwargs
+    ) -> None:
         super().__init__(*args, **(self.__class__.DEFAULT_INIT | kwargs))
 
         self.__class__.PSGWINDOW_ID_2_WINDOW[id(self)] = self
@@ -335,9 +372,9 @@ class Window(ClassInfo, ClassLogging, sg.Window):
         self._window_info_size: tuple[int | None, int | None] = (None, None)
         self._window_info_location: tuple[int | None, int | None] = (None, None)
         self._window_size_check_size: tuple[int | None, int | None] = (None, None)
-        self._event_handlers: list[WindowEventHandler] = []
+        self.event_handlers: list[WindowEventHandler] = event_handlers if event_handlers is not None else []
 
-        self.key: WindowKey = WindowKey(f"{self._class_name}[{self._class_instance_id}]")
+        self.key: WindowKey = key if key is not None else WindowKey(f"{self._class_name}{self._class_instance_id}")
         self.key_config: WindowKey = self.key.child('config')
         self.key_config_size: WindowKey = self.key_config.child('size')
         self.key_config_location: WindowKey = self.key_config.child('location')
@@ -382,8 +419,8 @@ class Window(ClassInfo, ClassLogging, sg.Window):
 
     def run(self):
         self.Finalize()
-        self._event_handlers.extend([x for x in self.AllKeysDict.values() if isinstance(x, WindowEventHandler)])
-        self._log.debug(f"Found {len(self._event_handlers)} event handlers")
+        self.event_handlers.extend([x for x in self.AllKeysDict.values() if isinstance(x, WindowEventHandler)])
+        self._log.debug(f"Found {len(self.event_handlers)} event handlers")
         self.BringToFront()
         self.bind('<Configure>', self.key_config)
 
@@ -412,7 +449,7 @@ class Window(ClassInfo, ClassLogging, sg.Window):
         window_events.extend([WindowEvent(self, x[0], values) for x in window_info_changes])
 
         for window_event in window_events:
-            for i, event_handler in enumerate(self._event_handlers):
+            for i, event_handler in enumerate(self.event_handlers):
                 msg_suffix = f"self._event_handlers[{i}]={getattr(event_handler, 'key', event_handler)}   window_event={window_event}"
                 listening_for_keys = event_handler.listening_for_keys
                 if listening_for_keys is None:
@@ -469,6 +506,8 @@ class Window(ClassInfo, ClassLogging, sg.Window):
         try:
             if item is None:
                 raise ValueError("Argument key cannot be None")
+            if isinstance(item, sg.Element):
+                item = item.key
             if not isinstance(item, WindowKey):
                 item = WindowKey(item)
             element = self.AllKeysDict.get(item)
@@ -626,18 +665,18 @@ class ColumnCollapsable(ElementBase, sg.Column):
     # region override
 
     def handle_window_event(self, event: WindowEvent):
-        if event.matches(self.element_arrow.key, self.element_title.key, self.element_section.key):
+        if event.matches(self.element_arrow, self.element_title, self.element_section):
             w = self.window
-            section = w[self.element_section.key]
+            section = w[self.element_section]
             is_visible = section.visible
             section.update(visible=not section.visible)
-            arrow_element = w[self.element_arrow.key]
+            arrow_element = w[self.element_arrow]
             arrow_element.update(self.arrow_up if is_visible else self.arrow_down)
 
             if hasattr(section, 'TKColFrame') and hasattr(section.TKColFrame, 'canvas'):
                 section.contents_changed()
 
-            column = w[self.key]
+            column = w[self]
             if hasattr(column, 'TKColFrame') and hasattr(column.TKColFrame, 'canvas'):
                 column.contents_changed()
 
@@ -673,7 +712,7 @@ class ButtonWindowEvent(ElementBase, sg.Button):
     # region override
 
     def handle_window_event(self, event: WindowEvent):
-        if event.matches(self.key):
+        if event.matches(self):
             self.on_window_event(event)
 
     # endregion override
@@ -693,11 +732,15 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         default_recursive_checked: bool = False,
         input_background_color_valid: str | None = WindowColor.GREEN_LIGHT,
         input_background_color_invalid: str | None = WindowColor.RED_LIGHT,
+        on_input_valid: Callable[[WindowEvent], None] | None = None,
+        on_input_invalid: Callable[[WindowEvent], None] | None = None,
         *args,
         **kwargs
     ):
         self.input_background_color_valid = input_background_color_valid
         self.input_background_color_invalid = input_background_color_invalid
+        self.on_input_valid = on_input_valid
+        self.on_input_invalid = on_input_invalid
 
         # default_directory_str = self._parse_path_resolve_str(default_directory)
         default_directory_str = str(default_directory or '')
@@ -726,7 +769,8 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         self.element_browse = sg.FolderBrowse(
             button_text='Browse',
             key=key.child('browse'),
-            target=str(self.element_input.key),  # https://github.com/PySimpleGUI/PySimpleGUI/issues/6260
+            # target=str(self.element_input.key),  # https://github.com/PySimpleGUI/PySimpleGUI/issues/6260
+            target=(sg.ThisRow, -2),
             initial_folder=default_directory_str,
         )
 
@@ -756,13 +800,13 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         if trim(path) is None:
             return None
 
-        p = None
-
+        # noinspection PyBroadException
         try:
             p = Path(path)
         except Exception:
             return None
 
+        # noinspection PyBroadException
         try:
             return p.expanduser().resolve()
         except Exception:
@@ -845,11 +889,11 @@ class ColumnBrowseDir(ElementBase, sg.Column):
     def handle_window_event(self, event: WindowEvent):
         w = self.window
 
-        if event.matches(self.element_input.key):
+        if event.matches(self.element_input):
             c = self._parse_input_background_color(self.value_dir_str)
-            w[self.element_input.key].update(background_color=c)
+            w[self.element_input].update(background_color=c)
 
-        if event.matches(self.element_resolve.key):
+        if event.matches(self.element_resolve):
             p = self.value_dir_str
             pp = self._parse_path_resolve_str(p)
             self._log.debug(f"Resolving Path: {p}  to  {pp}")
@@ -986,6 +1030,13 @@ class Tree(ElementBase, sg.Tree):
             row.insert(td)
         self.window[self.key].update(values=td)
 
+    def set_column_sizes2(self, column_sizes: [int | float | None]):
+        resize_table(
+            table=self.window[self.ParentContainer.get_element(dir_key.sub("FileList", "tree")),
+            total_width=window.get_element(dir_key.sub("FileList", "column")).get_size()[0],
+            column_sizes=[10, None, 100, 50]
+        )
+
     def set_column_sizes(self, column_sizes: dict[str | int, int]) -> None:
         column_sizes_int: dict[int, int | bool] = self._column_visibility.copy()
         for key, value in column_sizes.items():
@@ -1029,10 +1080,10 @@ class Tree(ElementBase, sg.Tree):
 
         self_name = f"{self.__class__.__name__}[{self.key}]"
         for col_name, i, col_size in column_sizes_new:
-            # _log.debug(f"{self_name}.Widget.column[{i}]({col_name}, width={col_size})")
+            self._log.debug(f"{self_name}.Widget.column[{i}]({col_name}, width={col_size})")
             widget.column(col_name, width=col_size)
 
-        # _log.debug(f"{self_name}.Widget.pack(side='left', fill='both', expand=True)")
+        self._log.debug(f"{self_name}.Widget.pack(side='left', fill='both', expand=True)")
         widget.pack(side='left', fill='both', expand=True)
 
     # endregion method
@@ -1055,42 +1106,7 @@ class Tree(ElementBase, sg.Tree):
 
 # endregion Elements
 
-
-def window_element_theme_sample_list(
-    window: Window,
-    key: WindowKey,
-    label_text: str = 'Themes',
-) -> list[sg.Element]:
-    label = sg.Text(
-        label_text,
-        key=key.child('label'),
-        size=(8, 1),
-        justification='right',
-    )
-    _log.debug(f"window.background_color: {window.background_color}")
-
-    combo_items = sg.theme_list()
-    combo = sg.DropDown(
-        values=combo_items,
-        enable_events=True,
-        key=key.child('combo'),
-        readonly=True,
-    )
-
-    layout = [label, combo]
-
-    def event_handler(event: WindowEvent):
-        val = trim(event[combo.key])
-        if val is not None:
-            sg.theme(val)
-            sg.popup_get_text(f"This is {val}")
-
-    window.subscribe([combo.key], event_handler)
-
-    return layout
-
-
-def _resize_table_calc(total_width: int | None, column_sizes: [int | float | None]) -> [int]:
+def _resize_table_calc(total_width: int | None, column_sizes: list[int | float | None]) -> list[int]:
     if total_width is not None and total_width < 0:
         raise ValueError(f"total_width={total_width} must be positive")
 

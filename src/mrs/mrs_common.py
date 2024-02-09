@@ -99,7 +99,7 @@ def bool_parse(value: str | bytes | bool) -> bool:
     raise ValueError("invalid literal for bool_parse(): " + value.__repr__())
 
 
-def split(delimiters: str | [str], string: str, maxsplit: int = 0, remove_empty: bool = False) -> list[str]:
+def split(delimiters: str | Iterable[str], string: str, maxsplit: int = 0, remove_empty: bool = False) -> list[str]:
     """
     Split a string on multiple characters
     https://stackoverflow.com/a/13184791
@@ -111,7 +111,7 @@ def split(delimiters: str | [str], string: str, maxsplit: int = 0, remove_empty:
     :return: a list of strings split
     """
     if isinstance(delimiters, str):
-        delimiters = [delimiters]
+        delimiters = [delimiters, ]
 
     regex_pattern = '|'.join(map(re.escape, delimiters))
     lst = re.split(regex_pattern, string, maxsplit)
