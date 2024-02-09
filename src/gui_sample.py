@@ -67,11 +67,28 @@ def run():
         )]]
     )
 
+    dir_key = window_key.child('dir')
+
     c_browsedir = ColumnBrowseDir(
-        key=window_key.child('browsedir'),
+        key=dir_key.child('browse'),
         show_recursive_checkbox=True,
         default_directory='~/temp',
         default_recursive_checked=True,
+    )
+
+    def dir_cache_scan(event: WindowEvent):
+        print('Scanning directory')
+
+    def dir_cache_clear(event: WindowEvent):
+        print('Clearing scan cache')
+
+    c_browsedir_scan = sg.Column(
+        key=dir_key.child('cache'),
+        layout=[[
+            sg.Text(key=dir_key.child('cache', 'label'), text='0 files in cache'),
+            ButtonWindowEvent(key=dir_key.child('cache', 'scan'), on_window_event=dir_cache_scan),
+            ButtonWindowEvent(key=dir_key.child('cache', 'clear'), on_window_event=dir_cache_clear),
+        ]]
     )
 
     w = Window(
@@ -80,6 +97,7 @@ def run():
             [c_files],
             [c_files2],
             [c_browsedir],
+            [c_browsedir_scan],
         ],
         font=('Ariel', 12),
         resizable=True,

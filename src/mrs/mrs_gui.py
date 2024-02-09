@@ -230,13 +230,20 @@ class WindowEvent:
 
     # region method
 
-    def matches(self, keys: Iterable[WindowKey]) -> bool:
+    def matches(self, *args: WindowKey) -> bool:
         if self.key is None:
             return False
 
+        if args is None or len(args) == 0:
+            return False
+
         k = self.key
-        for key in keys:
-            if k == key:
+        if isinstance(args, WindowKey):
+            return k == args
+
+        for arg in args:
+            assert isinstance(arg, WindowKey)
+            if k == arg:
                 return True
 
         return False
@@ -255,9 +262,21 @@ class WindowEvent:
 
 
 class WindowEventHandler(ABC):
+    # region init
+
+    def __init__(self, *args, **kwargs):
+        self.listening_for_keys: Set[WindowKey] | None = set()
+        super().__init__(*args, **kwargs)  # forwards all unused arguments
+
+    # endregion init
+
+    # region method
+
     @abstractmethod
     def handle_window_event(self, event: WindowEvent):
         raise NotImplementedError
+
+    # endregion method
 
 
 class Window(ClassInfo, ClassLogging, sg.Window):
@@ -563,12 +582,14 @@ class ColumnCollapsable(ElementBase, sg.Column):
 
         super().__init__(layout=column_layout, *args, **kwargs)
 
+        self.listening_for_keys.update([self.element_arrow.key, self.element_title.key, self.element_section.key])
+
     # endregion init
 
     # region override
 
     def handle_window_event(self, event: WindowEvent):
-        if event.matches([self.element_arrow.key, self.element_title.key, self.element_section.key]):
+        if event.matches(self.element_arrow.key, self.element_title.key, self.element_section.key):
             w = self.window
             section = w[self.element_section.key]
             is_visible = section.visible
@@ -600,14 +621,23 @@ class ButtonWindowEvent(ElementBase, sg.Button):
         self.on_window_event = on_window_event
         kwargs['key'] = key
 
+        if 'button_text' not in kwargs:
+            button_text = key.name
+            if button_text == button_text.lower():
+                button_text = button_text.capitalize()
+            kwargs['button_text'] = button_text
+
         super().__init__(*args, **kwargs)
+
+        self.listening_for_keys.update([self.key])
 
     # endregion init
 
     # region override
 
     def handle_window_event(self, event: WindowEvent):
-        self.on_window_event(event)
+        if event.matches(self.key):
+            self.on_window_event(event)
 
     # endregion override
 
@@ -629,12 +659,10 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         *args,
         **kwargs
     ):
-        self.show_recursive_checkbox = show_recursive_checkbox
-        self.show_resolve_button = show_resolve_button
         self.input_background_color_valid = input_background_color_valid
         self.input_background_color_invalid = input_background_color_invalid
 
-        default_directory_str = self._parse_path_resolve_str(default_directory)
+        # default_directory_str = self._parse_path_resolve_str(default_directory)
         default_directory_str = str(default_directory or '')
 
         self.element_label = sg.Text(
@@ -655,7 +683,7 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         self.element_resolve = sg.Button(
             key=key.child('resolve'),
             button_text='Resolve',
-            visible=self.show_resolve_button
+            visible=show_resolve_button
         )
 
         self.element_browse = sg.FolderBrowse(
@@ -668,7 +696,7 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         self.element_recursive = sg.Checkbox(
             text='Recursive',
             key=key.child('recursive'),
-            visible=self.show_recursive_checkbox,
+            visible=show_recursive_checkbox,
             default=default_recursive_checked,
         )
 
@@ -679,6 +707,7 @@ class ColumnBrowseDir(ElementBase, sg.Column):
             kwargs['expand_x'] = True
 
         super().__init__(layout=column_layout, *args, **kwargs)
+        # listen for all events
 
     # endregion init
 
@@ -790,11 +819,11 @@ class ColumnBrowseDir(ElementBase, sg.Column):
         if self.show_resolve_button != resolve.visible:
             resolve.update(visible=self.show_resolve_button)
 
-        if event.matches([self.element_input.key]):
+        if event.matches(self.element_input.key):
             c = self._parse_input_background_color(self.value_dir_str)
             w[self.element_input.key].update(background_color=c)
 
-        if event.matches([self.element_resolve.key]):
+        if event.matches(self.element_resolve.key):
             p = self.value_dir_str
             pp = self._parse_path_resolve_str(p)
             self._log.debug(f"Resolving Path: {p}  to  {pp}")
@@ -909,6 +938,8 @@ class Tree(ElementBase, sg.Tree):
             kwargs['max_col_width'] = 9999
 
         super().__init__(*args, **kwargs)
+
+        self.listening_for_keys = None  # don't listen for any event
 
     # endregion init
 
