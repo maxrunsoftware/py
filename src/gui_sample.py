@@ -69,7 +69,7 @@ def run():
 
     dir_key = window_key.child('dir')
 
-    c_browsedir = ColumnBrowseDir(
+    c_dir_browse = ColumnBrowseDir(
         key=dir_key.child('browse'),
         show_recursive_checkbox=True,
         default_directory='~/temp',
@@ -82,7 +82,7 @@ def run():
     def dir_cache_clear(event: WindowEvent):
         print('Clearing scan cache')
 
-    c_browsedir_scan = sg.Column(
+    c_dir_cache = sg.Column(
         key=dir_key.child('cache'),
         layout=[[
             sg.Text(key=dir_key.child('cache', 'label'), text='0 files in cache'),
@@ -96,8 +96,8 @@ def run():
         layout=[
             [c_files],
             [c_files2],
-            [c_browsedir],
-            [c_browsedir_scan],
+            [c_dir_browse],
+            [c_dir_cache],
         ],
         font=('Ariel', 12),
         resizable=True,

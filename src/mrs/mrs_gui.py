@@ -279,6 +279,32 @@ class WindowEventHandler(ABC):
     # endregion method
 
 
+class WindowEventCallback(ClassInfo, ClassLogging, WindowEventHandler):
+
+    # region init
+
+    def __init__(
+        self,
+        keys: Iterable[WindowKey],
+        callback: Callable[[WindowEvent]],
+        *args,
+        **kwargs
+    ):
+        self.callback = callback
+        super().__init__(*args, **kwargs)  # forwards all unused arguments
+        self.listening_for_keys.update([key for key in keys])
+
+    # endregion init
+
+    # region override
+
+    def handle_window_event(self, event: WindowEvent):
+        if event.key in self.listening_for_keys:
+            self.callback(event)
+
+    # endregion override
+
+
 class Window(ClassInfo, ClassLogging, sg.Window):
 
     # region attributes
@@ -303,12 +329,13 @@ class Window(ClassInfo, ClassLogging, sg.Window):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **(self.__class__.DEFAULT_INIT | kwargs))
+
         self.__class__.PSGWINDOW_ID_2_WINDOW[id(self)] = self
 
         self._window_info_size: tuple[int | None, int | None] = (None, None)
         self._window_info_location: tuple[int | None, int | None] = (None, None)
         self._window_size_check_size: tuple[int | None, int | None] = (None, None)
-        self._event_handlers: list[Any] = []
+        self._event_handlers: list[WindowEventHandler] = []
 
         self.key: WindowKey = WindowKey(f"{self._class_name}[{self._class_instance_id}]")
         self.key_config: WindowKey = self.key.child('config')
@@ -386,8 +413,18 @@ class Window(ClassInfo, ClassLogging, sg.Window):
 
         for window_event in window_events:
             for i, event_handler in enumerate(self._event_handlers):
-                self._log.debug(f"Calling self._event_handlers[{i}]={event_handler} for event {window_event}")
-                event_handler.handle_window_event(window_event)
+                msg_suffix = f"self._event_handlers[{i}]={getattr(event_handler, 'key', event_handler)}   window_event={window_event}"
+                listening_for_keys = event_handler.listening_for_keys
+                if listening_for_keys is None:
+                    self._log.debug(f"SKIP not listening for any events  {msg_suffix}")
+                elif len(listening_for_keys) == 0:
+                    self._log.debug(f"CALL listening for ALL events      {msg_suffix}")
+                    event_handler.handle_window_event(window_event)
+                elif window_event.key in listening_for_keys:
+                    self._log.debug(f"CALL listening for this event      {msg_suffix}")
+                    event_handler.handle_window_event(window_event)
+                else:
+                    self._log.debug(f"SKIP not listening for this event  {msg_suffix}")
 
         self._check_window_size()
 
@@ -707,7 +744,8 @@ class ColumnBrowseDir(ElementBase, sg.Column):
             kwargs['expand_x'] = True
 
         super().__init__(layout=column_layout, *args, **kwargs)
-        # listen for all events
+
+        self.listening_for_keys.update([self.element_input.key, self.element_resolve.key])
 
     # endregion init
 
@@ -796,8 +834,6 @@ class ColumnBrowseDir(ElementBase, sg.Column):
 
     @property
     def value_is_recursive(self) -> bool:
-        if not self.show_recursive_checkbox:
-            return False
         w = self.window
         recursive = w[self.element_recursive.key]
         return recursive.get()
@@ -808,16 +844,6 @@ class ColumnBrowseDir(ElementBase, sg.Column):
 
     def handle_window_event(self, event: WindowEvent):
         w = self.window
-
-        # update recursive checkbox visibility if changed
-        recursive = w[self.element_recursive.key]
-        if self.show_recursive_checkbox != recursive.visible:
-            recursive.update(visible=self.show_recursive_checkbox)
-
-        # update resolve button visibility if changed
-        resolve = w[self.element_resolve.key]
-        if self.show_resolve_button != resolve.visible:
-            resolve.update(visible=self.show_resolve_button)
 
         if event.matches(self.element_input.key):
             c = self._parse_input_background_color(self.value_dir_str)
