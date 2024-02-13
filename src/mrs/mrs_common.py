@@ -1514,6 +1514,7 @@ class TerminalGraphicsFormatter(ClassInfo):
 
 # endregion color
 
+
 # region images
 
 # @formatter:off
@@ -1647,9 +1648,9 @@ def logging_setup(
 # endregion logging
 
 
-class FileSystemEntrySnapshot(ClassInfo, ClassLogging):
+class FileSystemSnapshot(ClassInfo, ClassLogging):
     def __init__(self, follow_symlinks: bool = False):
-        super(FileSystemEntrySnapshot, self).__init__()
+        super().__init__()
         self._is_case_sensitive: bool = RUNTIME_INFO.os.is_fs_case_sensitive
         self._all = self._dict()
         self._children = self._dict()
@@ -1753,10 +1754,10 @@ class FileSystemEntry(ClassInfo):
         self,
         path: str | Path | DirEntry,
         follow_symlinks: bool | None = None,
-        snapshot: FileSystemEntrySnapshot | None = None,
+        snapshot: FileSystemSnapshot | None = None,
     ) -> None:
-        super(FileSystemEntry, self).__init__()
-        self._snapshot = snapshot or FileSystemEntrySnapshot()
+        super().__init__()
+        self._snapshot = snapshot or FileSystemSnapshot()
         self._path: Path | None = None
         self._path_str: str | None = None
         self._dir_entry: DirEntry | None = None

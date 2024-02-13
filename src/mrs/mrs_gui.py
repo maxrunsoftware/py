@@ -1030,11 +1030,21 @@ class Tree(ElementBase, sg.Tree):
             row.insert(td)
         self.window[self.key].update(values=td)
 
-    def set_column_sizes2(self, column_sizes: [int | float | None]):
+    def set_column_sizes2(self, column_sizes: [int | float | None], parent_width: sg.Element | int = None) -> None:
+        total_width: int
+        if parent_width is None:
+            total_width = self.get_size()[0]
+        elif isinstance(parent_width, int):
+            total_width = parent_width
+        elif isinstance(parent_width, sg.Element):
+            total_width = parent_width.get_size()[0]
+        else:
+            raise TypeError(f"parent_width must be sg.Element or int, not {type(parent_width)}")
+
         resize_table(
-            table=self.window[self.ParentContainer.get_element(dir_key.sub("FileList", "tree")),
-            total_width=window.get_element(dir_key.sub("FileList", "column")).get_size()[0],
-            column_sizes=[10, None, 100, 50]
+            table=self.window[self.key],
+            total_width=total_width,
+            column_sizes=column_sizes,
         )
 
     def set_column_sizes(self, column_sizes: dict[str | int, int]) -> None:
@@ -1105,6 +1115,10 @@ class Tree(ElementBase, sg.Tree):
 
 
 # endregion Elements
+
+
+# region function
+
 
 def _resize_table_calc(total_width: int | None, column_sizes: list[int | float | None]) -> list[int]:
     if total_width is not None and total_width < 0:
@@ -1298,3 +1312,15 @@ def resize_table(table: sg.Element, total_width: int | None, column_sizes: [int 
 
     _log.debug(f"{table_name_widget}.pack(side='left', fill='both', expand=True)")
     table_widget.pack(side='left', fill='both', expand=True)
+
+
+def get_column_names(table: sg.Table | sg.Tree) -> list[str]:
+    cs = []
+    if isinstance(table, sg.Table):
+        cs.extend(table.ColumnHeadings)
+    elif isinstance(table, sg.Tree):
+        cs.append(table.col0_heading)
+        cs.extend(table.ColumnHeadings)
+    return cs
+
+# endregion function

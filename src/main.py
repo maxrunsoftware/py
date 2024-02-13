@@ -7,7 +7,7 @@ from src import cmd_gui, gui_sample
 def other():
 
     path = '/Users/user/dev'
-    fses = FileSystemEntrySnapshot()
+    fses = FileSystemSnapshot()
     fse = FileSystemEntry(path, snapshot=fses)
     items = [fse]
     items_children = fse.children_all

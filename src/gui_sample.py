@@ -77,7 +77,7 @@ def run():
     )
 
     def dir_cache_scan(event: WindowEvent):
-        print('Scanning directory')
+        _log.debug(f"Scanning directory: {c_dir_browse.value_dir}")
 
     def dir_cache_clear(event: WindowEvent):
         print('Clearing scan cache')

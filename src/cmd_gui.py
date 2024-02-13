@@ -21,7 +21,7 @@ class FileSystemManager(Window):
     def __init__(self):
         super(FileSystemManager, self).__init__()
         self.directory: WindowElementBrowseDirEvent
-        self.file_system = FileSystemEntrySnapshot()
+        self.file_system = FileSystemSnapshot()
         self.tree_data = []
 
 
