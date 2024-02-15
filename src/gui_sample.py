@@ -76,11 +76,14 @@ def run():
         default_recursive_checked=True,
     )
 
+    fss = FileSystemSnapshot()
+
     def dir_cache_scan(event: WindowEvent):
-        _log.debug(f"Scanning directory: {c_dir_browse.value_dir}")
+        _log.info(f"Scanning directory: {c_dir_browse.value_dir}")
 
     def dir_cache_clear(event: WindowEvent):
-        print('Clearing scan cache')
+        _log.info(f"Clearing scan cache {fss}")
+        c_dir
 
     c_dir_cache = sg.Column(
         key=dir_key.child('cache'),

@@ -372,7 +372,7 @@ class Window(ClassInfo, ClassLogging, sg.Window):
         self._window_info_size: tuple[int | None, int | None] = (None, None)
         self._window_info_location: tuple[int | None, int | None] = (None, None)
         self._window_size_check_size: tuple[int | None, int | None] = (None, None)
-        self.event_handlers: list[WindowEventHandler] = event_handlers if event_handlers is not None else []
+        self.event_handlers: list[WindowEventHandler] = []
 
         self.key: WindowKey = key if key is not None else WindowKey(f"{self._class_name}{self._class_instance_id}")
         self.key_config: WindowKey = self.key.child('config')
@@ -419,8 +419,11 @@ class Window(ClassInfo, ClassLogging, sg.Window):
 
     def run(self):
         self.Finalize()
-        self.event_handlers.extend([x for x in self.AllKeysDict.values() if isinstance(x, WindowEventHandler)])
-        self._log.debug(f"Found {len(self.event_handlers)} event handlers")
+        for event_handler in self.AllKeysDict.values():
+            if isinstance(event_handler, WindowEventHandler):
+                self._log.debug(f"Adding {WindowEventHandler.__name__}: {event_handler}")
+                self.event_handlers.append(event_handler)
+
         self.BringToFront()
         self.bind('<Configure>', self.key_config)
 
@@ -449,19 +452,24 @@ class Window(ClassInfo, ClassLogging, sg.Window):
         window_events.extend([WindowEvent(self, x[0], values) for x in window_info_changes])
 
         for window_event in window_events:
+            self._log.debug(f"{self.key} event handling  [START]: {window_event}")
+
             for i, event_handler in enumerate(self.event_handlers):
-                msg_suffix = f"self._event_handlers[{i}]={getattr(event_handler, 'key', event_handler)}   window_event={window_event}"
+                ipad = str(i).rjust(len(str(len(self.event_handlers))), ' ')
+                msg_suffix = f"{window_event.key}  -->  {getattr(event_handler, 'key', event_handler)}"
                 listening_for_keys = event_handler.listening_for_keys
                 if listening_for_keys is None:
-                    self._log.debug(f"SKIP not listening for any events  {msg_suffix}")
+                    self._log.debug(f"{self.key} event handling  [{ipad}] not listening for any events:  {msg_suffix}")
                 elif len(listening_for_keys) == 0:
-                    self._log.debug(f"CALL listening for ALL events      {msg_suffix}")
+                    self._log.debug(f"{self.key} event handling *[{ipad}]     listening for ALL events:  {msg_suffix}")
                     event_handler.handle_window_event(window_event)
                 elif window_event.key in listening_for_keys:
-                    self._log.debug(f"CALL listening for this event      {msg_suffix}")
+                    self._log.debug(f"{self.key} event handling *[{ipad}]     listening for this event:  {msg_suffix}")
                     event_handler.handle_window_event(window_event)
                 else:
-                    self._log.debug(f"SKIP not listening for this event  {msg_suffix}")
+                    self._log.debug(f"{self.key} event handling  [{ipad}] not listening for this event:  {msg_suffix}")
+
+            self._log.debug(f"{self.key} event handling [END]:   {window_event}")
 
         self._check_window_size()
 

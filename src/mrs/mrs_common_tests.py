@@ -63,3 +63,39 @@ class MRSCommonTests(unittest.TestCase):
 
     def test_xstr_iterable_None(self):
         self.assertEqual(['a', '', 'c'], xstr(['a', None, 'c']))
+
+    def test_compare_iterable_equal(self):
+        data = [
+            ([1, 2, 3], [1, 2, 3]),
+            ([1, 2, 3], (1, 2, 3)),
+            ({1, 2, 3}, (1, 2, 3)),
+            ([1, 2, 3], {1: 1, 2: 2, 3: 3}.keys()),
+            ({1: 1, 2: 2, 3: 3}.values(), [1, 2, 3]),
+            ([1, None, 3], [1, None, 3]),
+            ([], []),
+            ([None, None, None], [None, None, None]),
+            (['aaa', 'bb', 'c'], ['aaa', 'bb', 'c']),
+        ]
+
+        for x, y in data:
+            with self.subTest(x=x, y=y):
+                self.assertEqual(0, compare_iterable(x, y), f"compare_iterable({x}, {y}) != 0")
+
+    def test_compare_iterable_not_equal(self):
+        data = [
+            ([1, 2, 3], [1, 2, 9]),
+            ([1, 2, None], [1, 2, 1]),
+            ([1, 2, 3], [1, 2, 3, 4]),
+            ([1, 2, 3, None], [1, 2, 3, None, None]),
+            ([], [1]),
+            (['aaa', 'bb', 'c'], ['aaa', 'bb', 'cc']),
+            (['a', 'b', 'c'], ['a', 'b', 'd']),
+            (['a', 'b', None], ['a', 'b', 'c']),
+            ([None], [None, None]),
+            ([None], ['a']),
+        ]
+
+        for x, y in data:
+            with self.subTest(x=x, y=y):
+                self.assertEqual(-1, compare_iterable(x, y), f"compare_iterable({x}, {y}) != -1")
+                self.assertEqual(1, compare_iterable(y, x), f"compare_iterable({y}, {x}) != 1")

@@ -485,6 +485,46 @@ def logger(module: Any = None, cls: Any = None) -> logging.Logger:
     return logging.getLogger(module_name + cls_name)
 
 
+def compare_iterable(
+    x: Iterable[Any] | None,
+    y: Iterable[Any] | None
+) -> int:
+    if x is None:
+        return 0 if y is None else -1
+    if y is None:
+        return 1
+
+    x = iter(x)
+    y = iter(y)
+
+    stop = Object()
+    while True:
+        xx = next(x, stop)
+        yy = next(y, stop)
+
+        if xx is stop:
+            return 0 if yy is stop else -1
+        if yy is stop:
+            return 1
+
+        if xx is None:
+            if yy is None:
+                continue
+            return -1
+        if yy is None:
+            return 1
+
+        x_less_y = xx < yy
+        if x_less_y:
+            return -1
+
+        y_less_x = yy < xx
+        if y_less_x:
+            return 1
+
+        assert not x_less_y and not y_less_x
+
+
 # endregion util
 
 
@@ -1649,6 +1689,9 @@ def logging_setup(
 
 
 class FileSystemSnapshot(ClassInfo, ClassLogging):
+
+    # region init
+
     def __init__(self, follow_symlinks: bool = False):
         super().__init__()
         self._is_case_sensitive: bool = RUNTIME_INFO.os.is_fs_case_sensitive
@@ -1656,6 +1699,10 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         self._children = self._dict()
         self._parents = self._dict()
         self.follow_symlinks: bool = follow_symlinks
+
+    # endregion init
+
+    # region method
 
     def _dict(self):
         return dict() if self.is_case_sensitive else DictStrCasefold()
@@ -1665,9 +1712,9 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         self._children = self._dict()
         self._parents = self._dict()
 
-    @property
-    def is_case_sensitive(self) -> bool:
-        return self._is_case_sensitive
+    # endregion method
+
+    # region method
 
     def add(self, entry: FileSystemEntry) -> None:
         self._all[entry.path_str] = entry
@@ -1748,8 +1795,28 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         items.sort()
         return items
 
+    # endregion method
+
+    # region @property
+
+    @property
+    def is_case_sensitive(self) -> bool:
+        return self._is_case_sensitive
+
+    # endregion @property
+
+    # region override
+
+    def __str__(self):
+        return f"{self.__class__.__name__}[{len(self._all)}]"
+
+    # endregion override
+
 
 class FileSystemEntry(ClassInfo):
+
+    # region init
+
     def __init__(
         self,
         path: str | Path | DirEntry,
@@ -1757,7 +1824,7 @@ class FileSystemEntry(ClassInfo):
         snapshot: FileSystemSnapshot | None = None,
     ) -> None:
         super().__init__()
-        self._snapshot = snapshot or FileSystemSnapshot()
+        self._snapshot = snapshot if snapshot is not None else FileSystemSnapshot()
         self._path: Path | None = None
         self._path_str: str | None = None
         self._dir_entry: DirEntry | None = None
@@ -1789,50 +1856,16 @@ class FileSystemEntry(ClassInfo):
         self._path_parts_cased: list[str] | None = None
         self._name: str = path.name
 
-    def __eq__(self, __value):
-        if not isinstance(__value, FileSystemEntry):
-            return False
-        return self._path_str_cased == __value._path_str_cased
+    # endregion init
 
-    def __str__(self):
-        return self._path_str
-
-    def __repr__(self):
-        return (
-                self.__class__.__module__
-                + "." + self.__class__.__name__
-                + f"(path={self.path_str}, follow_symlinks={self._follow_symlinks})"
-        )
-
-    def __hash__(self):
-        return hash(self._path_str_cased)
-
-    def __lt__(self, __value):
-        if __value is None or not isinstance(__value, FileSystemEntry):
-            return False
-
-        parts_x = self.path_parts_cased
-        parts_y = __value.path_parts_cased
-        len_x = len(parts_x)
-        len_y = len(parts_y)
-        len_min_parts = len_x if len_x < len_y else len_y
-
-        for i in range(len_min_parts):
-            x = parts_x[i]
-            y = parts_y[i]
-            if x == y:
-                continue
-            if x < y:
-                return True
-            return False
-
-        if len_x < len_y:
-            return True
-
-        return False
+    # region method
 
     def add_error(self, msg: str, exception: Exception | None = None) -> None:
         self.errors.append((msg, exception))
+
+    # endregion method
+
+    # region @property
 
     @property
     def path_parts(self) -> list[str]:
@@ -2087,3 +2120,56 @@ class FileSystemEntry(ClassInfo):
     @property
     def children_all(self) -> [FileSystemEntry]:
         return self._snapshot.get_children_all(self)
+
+    # endregion @property
+
+    # region override
+
+    def __eq__(self, __value):
+        if __value is None:
+            return False
+        if not isinstance(__value, FileSystemEntry):
+            return self.__eq__(self.__class__(str(__value)))
+        return self._path_str_cased == __value._path_str_cased
+
+    def __str__(self):
+        return self._path_str
+
+    def __repr__(self):
+        return (
+                self.__class__.__module__
+                + "." + self.__class__.__name__
+                + f"(path={self.path_str}, follow_symlinks={self._follow_symlinks})"
+        )
+
+    def __hash__(self):
+        return hash(self._path_str_cased)
+
+    def __lt__(self, __value):
+        if __value is None:
+            return False
+
+        if not isinstance(__value, FileSystemEntry):
+            return self.__lt__(self.__class__(str(__value)))
+
+        parts_x = self.path_parts_cased
+        parts_y = __value.path_parts_cased
+        len_x = len(parts_x)
+        len_y = len(parts_y)
+        len_min_parts = len_x if len_x < len_y else len_y
+
+        for i in range(len_min_parts):
+            x = parts_x[i]
+            y = parts_y[i]
+            if x == y:
+                continue
+            if x < y:
+                return True
+            return False
+
+        if len_x < len_y:
+            return True
+
+        return False
+
+    # endregion override
