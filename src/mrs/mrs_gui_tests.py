@@ -11,7 +11,7 @@ class MRSGUITests(unittest.TestCase):
 
     @staticmethod
     def _reset():
-        WindowKey.clear_keys()
+        WindowKey._KEYS.clear()
 
     def test_WindowKey_init(self):
         self.__class__._reset()

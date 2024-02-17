@@ -485,10 +485,78 @@ def logger(module: Any = None, cls: Any = None) -> logging.Logger:
     return logging.getLogger(module_name + cls_name)
 
 
+def compare(
+    x: Any | None,
+    y: Any | None,
+) -> int:
+    if x is None:
+        return 0 if y is None else -1
+    if y is None:
+        return 1
+    if x is y:
+        return 0
+
+    es = {}
+    i = 0
+    if hasattr(x, '__lt__'):
+        try:
+            if x < y:
+                return -1
+            i = i + 1
+            if i == 2:
+                return 0
+        except Exception as e:
+            es[0] = e
+
+    if hasattr(x, '__gt__'):
+        try:
+            if x > y:
+                return 1
+            i = i + 1
+            if i == 2:
+                return 0
+        except Exception as e:
+            es[1] = e
+
+    if hasattr(y, '__lt__'):
+        try:
+            if y < x:
+                return 1
+            i = i + 1
+            if i == 2:
+                return 0
+        except Exception as e:
+            es[2] = e
+
+    if hasattr(y, '__gt__'):
+        try:
+            if y > x:
+                return -1
+            i = i + 1
+            if i == 2:
+                return 0
+        except Exception as e:
+            es[3] = e
+
+    if len(es) > 0:
+        raise ExceptionGroup(f"Exceptions encountered comparing objects {x.__class__.__name__} and {y.__class__.__name__}", [e for e in es.values()])
+
+    raise TypeError(f"Objects {x.__class__.__name__} and {y.__class__.__name__} are not comparable")
+
+
 def compare_iterable(
     x: Iterable[Any] | None,
-    y: Iterable[Any] | None
+    y: Iterable[Any] | None,
+    comparator: Callable[[Any, Any], int] = None,
 ) -> int:
+    if isinstance(x, str):
+        raise TypeError(f"x='{x}' is a str not a real iterable")
+    if isinstance(y, str):
+        raise TypeError(f"y='{y}' is a str not a real iterable")
+
+    if comparator is None:
+        comparator = compare
+
     if x is None:
         return 0 if y is None else -1
     if y is None:
@@ -507,22 +575,9 @@ def compare_iterable(
         if yy is stop:
             return 1
 
-        if xx is None:
-            if yy is None:
-                continue
-            return -1
-        if yy is None:
-            return 1
-
-        x_less_y = xx < yy
-        if x_less_y:
-            return -1
-
-        y_less_x = yy < xx
-        if y_less_x:
-            return 1
-
-        assert not x_less_y and not y_less_x
+        c = comparator(xx, yy)
+        if c != 0:
+            return c
 
 
 # endregion util
