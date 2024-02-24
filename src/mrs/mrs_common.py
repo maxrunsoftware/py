@@ -24,7 +24,7 @@ import os
 import re
 import sys
 import threading
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -586,16 +586,18 @@ def compare_iterable(
 # region dict
 
 
-class DictStrBase(MutableMapping, metaclass=ABCMeta):
-    def __init__(self, data=None, **kwargs):
+class DictStr(MutableMapping):
+    def __init__(self, data=None, key_converter: Callable[[Any], Any] = None, **kwargs):
+        if key_converter is None:
+            key_converter = lambda x: x
+        self.key_converter = key_converter
         self._data = dict()
         if data is None:
             data = {}
         self.update(data, **kwargs)
 
-    @abstractmethod
     def _convert_key(self, s: str) -> str:
-        raise NotImplementedError("DictStr._convert_key not implemented")
+        return self.key_converter(s)
 
     def __setitem__(self, key, value):
         self._data[self._convert_key(key)] = (key, value)
@@ -627,36 +629,36 @@ class DictStrBase(MutableMapping, metaclass=ABCMeta):
     def copy(self):
         return self.__class__(self._data.values())
 
+    def __copy__(self):
+        return self.copy()
+
     def __repr__(self):
         return f"{dict(self.items())}"
 
 
-class DictStrCase(DictStrBase):
-    def __init__(self, data=None, **kwargs):
-        super().__init__(data, **kwargs)
+class DictKeyString:
+    """
+    https://stackoverflow.com/a/30221547
+    """
 
-    def _convert_key(self, s: str) -> str: return s
+    def __init__(self, key: str, case_sensitive: bool = True):
+        super(DictKeyString, self).__init__()
+        self.value = key
+        self.key = key if case_sensitive else key.casefold()
+        self.hash = hash(self.key)
 
-    def copy(self) -> Self:
-        # noinspection PyTypeChecker
-        return super().copy()
+    def __hash__(self): return self.hash
 
+    def __eq__(self, other): return self.key == other.key
 
-class DictStrCasefold(DictStrBase):
-    def __init__(self, data=None, **kwargs):
-        super().__init__(data, **kwargs)
-
-    def _convert_key(self, s: str) -> str: return s.casefold()
-
-    def copy(self) -> Self:
-        # noinspection PyTypeChecker
-        return super().copy()
+    def __str__(self): return self.value
 
 
 # endregion dict
 
 
 # region os
+
 
 class OperatingSystem(Enum):
     def __new__(cls, *args, **kwds):
@@ -700,6 +702,7 @@ class OperatingSystem(Enum):
 
 
 # region runtime
+
 
 class RuntimeExecutionType(Enum):
     SOURCE = 1
@@ -959,6 +962,9 @@ def fs_file_hash_sha512(path: Union[str, bytes, PathLike[str], PathLike[bytes] |
 # endregion fs
 
 
+# region threading
+
+
 @final
 class LazyAttribute(Generic[T]):
     def __init__(self, factory: Optional[Callable[[], T]] = None, value: Optional[T] = None):
@@ -988,22 +994,7 @@ class LazyAttribute(Generic[T]):
                 return self._value
 
 
-class DictKeyString:
-    """
-    https://stackoverflow.com/a/30221547
-    """
-
-    def __init__(self, key: str, case_sensitive: bool = True):
-        super(DictKeyString, self).__init__()
-        self.value = key
-        self.key = key if case_sensitive else key.casefold()
-        self.hash = hash(self.key)
-
-    def __hash__(self): return self.hash
-
-    def __eq__(self, other): return self.key == other.key
-
-    def __str__(self): return self.value
+# endregion threading
 
 
 # region atomic
@@ -1306,69 +1297,204 @@ class JsonDict:
 
 # region color
 
+# https://github.com/ubernostrum/webcolors/blob/6ac4121d44c8eda10090e8e9463ea1cf23f1932d/src/webcolors/constants.py#L17
+_COLOR_HEX_REGEX = re.compile(r"^#?([a-fA-F0-9]{3}|[a-fA-F0-9]{6})$")
+
 
 class Color:
-    def __init__(self):
-        self._r = 0
-        self._g = 0
-        self._b = 0
-        self._h = 0.0
-        self._s = 0.0
-        self._v = 0.0
 
-    @property
-    def r(self):
-        return self._r
+    # https://github.com/ubernostrum/webcolors/blob/trunk/src/webcolors/constants.py
+    # noinspection SpellCheckingInspection
+    NAME_2_HEX = DictStr(
+        key_converter=lambda k: k.lower(), data={
+            "aliceblue": "#f0f8ff",
+            "antiquewhite": "#faebd7",
+            "aqua": "#00ffff",
+            "aquamarine": "#7fffd4",
+            "azure": "#f0ffff",
+            "beige": "#f5f5dc",
+            "bisque": "#ffe4c4",
+            "black": "#000000",
+            "blanchedalmond": "#ffebcd",
+            "blue": "#0000ff",
+            "blueviolet": "#8a2be2",
+            "brown": "#a52a2a",
+            "burlywood": "#deb887",
+            "cadetblue": "#5f9ea0",
+            "chartreuse": "#7fff00",
+            "chocolate": "#d2691e",
+            "coral": "#ff7f50",
+            "cornflowerblue": "#6495ed",
+            "cornsilk": "#fff8dc",
+            "crimson": "#dc143c",
+            "cyan": "#00ffff",
+            "darkblue": "#00008b",
+            "darkcyan": "#008b8b",
+            "darkgoldenrod": "#b8860b",
+            "darkgray": "#a9a9a9",
+            "darkgrey": "#a9a9a9",
+            "darkgreen": "#006400",
+            "darkkhaki": "#bdb76b",
+            "darkmagenta": "#8b008b",
+            "darkolivegreen": "#556b2f",
+            "darkorange": "#ff8c00",
+            "darkorchid": "#9932cc",
+            "darkred": "#8b0000",
+            "darksalmon": "#e9967a",
+            "darkseagreen": "#8fbc8f",
+            "darkslateblue": "#483d8b",
+            "darkslategray": "#2f4f4f",
+            "darkslategrey": "#2f4f4f",
+            "darkturquoise": "#00ced1",
+            "darkviolet": "#9400d3",
+            "deeppink": "#ff1493",
+            "deepskyblue": "#00bfff",
+            "dimgray": "#696969",
+            "dimgrey": "#696969",
+            "dodgerblue": "#1e90ff",
+            "firebrick": "#b22222",
+            "floralwhite": "#fffaf0",
+            "forestgreen": "#228b22",
+            "fuchsia": "#ff00ff",
+            "gainsboro": "#dcdcdc",
+            "ghostwhite": "#f8f8ff",
+            "gold": "#ffd700",
+            "goldenrod": "#daa520",
+            "gray": "#808080",
+            "grey": "#808080",
+            "green": "#008000",
+            "greenyellow": "#adff2f",
+            "honeydew": "#f0fff0",
+            "hotpink": "#ff69b4",
+            "indianred": "#cd5c5c",
+            "indigo": "#4b0082",
+            "ivory": "#fffff0",
+            "khaki": "#f0e68c",
+            "lavender": "#e6e6fa",
+            "lavenderblush": "#fff0f5",
+            "lawngreen": "#7cfc00",
+            "lemonchiffon": "#fffacd",
+            "lightblue": "#add8e6",
+            "lightcoral": "#f08080",
+            "lightcyan": "#e0ffff",
+            "lightgoldenrodyellow": "#fafad2",
+            "lightgray": "#d3d3d3",
+            "lightgrey": "#d3d3d3",
+            "lightgreen": "#90ee90",
+            "lightpink": "#ffb6c1",
+            "lightsalmon": "#ffa07a",
+            "lightseagreen": "#20b2aa",
+            "lightskyblue": "#87cefa",
+            "lightslategray": "#778899",
+            "lightslategrey": "#778899",
+            "lightsteelblue": "#b0c4de",
+            "lightyellow": "#ffffe0",
+            "lime": "#00ff00",
+            "limegreen": "#32cd32",
+            "linen": "#faf0e6",
+            "magenta": "#ff00ff",
+            "maroon": "#800000",
+            "mediumaquamarine": "#66cdaa",
+            "mediumblue": "#0000cd",
+            "mediumorchid": "#ba55d3",
+            "mediumpurple": "#9370db",
+            "mediumseagreen": "#3cb371",
+            "mediumslateblue": "#7b68ee",
+            "mediumspringgreen": "#00fa9a",
+            "mediumturquoise": "#48d1cc",
+            "mediumvioletred": "#c71585",
+            "midnightblue": "#191970",
+            "mintcream": "#f5fffa",
+            "mistyrose": "#ffe4e1",
+            "moccasin": "#ffe4b5",
+            "navajowhite": "#ffdead",
+            "navy": "#000080",
+            "oldlace": "#fdf5e6",
+            "olive": "#808000",
+            "olivedrab": "#6b8e23",
+            "orange": "#ffa500",
+            "orangered": "#ff4500",
+            "orchid": "#da70d6",
+            "palegoldenrod": "#eee8aa",
+            "palegreen": "#98fb98",
+            "paleturquoise": "#afeeee",
+            "palevioletred": "#db7093",
+            "papayawhip": "#ffefd5",
+            "peachpuff": "#ffdab9",
+            "peru": "#cd853f",
+            "pink": "#ffc0cb",
+            "plum": "#dda0dd",
+            "powderblue": "#b0e0e6",
+            "purple": "#800080",
+            "red": "#ff0000",
+            "rosybrown": "#bc8f8f",
+            "royalblue": "#4169e1",
+            "saddlebrown": "#8b4513",
+            "salmon": "#fa8072",
+            "sandybrown": "#f4a460",
+            "seagreen": "#2e8b57",
+            "seashell": "#fff5ee",
+            "sienna": "#a0522d",
+            "silver": "#c0c0c0",
+            "skyblue": "#87ceeb",
+            "slateblue": "#6a5acd",
+            "slategray": "#708090",
+            "slategrey": "#708090",
+            "snow": "#fffafa",
+            "springgreen": "#00ff7f",
+            "steelblue": "#4682b4",
+            "tan": "#d2b48c",
+            "teal": "#008080",
+            "thistle": "#d8bfd8",
+            "tomato": "#ff6347",
+            "turquoise": "#40e0d0",
+            "violet": "#ee82ee",
+            "wheat": "#f5deb3",
+            "white": "#ffffff",
+            "whitesmoke": "#f5f5f5",
+            "yellow": "#ffff00",
+            "yellowgreen": "#9acd32",
+        }
+    )
 
-    @r.setter
-    def r(self, value: int):
-        self._r = self._min_max(value, 0, 255)
-        self._calc_hsv()
+    def __init__(self, color: str | tuple[int, int, int] | tuple[float, float, float] = None) -> None:
+        self._rgb: tuple[int, int, int] = (0, 0, 0)
+        self._hsv: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-    @property
-    def g(self):
-        return self._g
+        if color is None:
+            return
 
-    @g.setter
-    def g(self, value: int):
-        self._g = self._min_max(value, 0, 255)
-        self._calc_hsv()
+        if isinstance(color, str):
+            hex_color = self.__class__.NAME_2_HEX.get(color)
+            if hex_color is not None:
+                self.hex = hex_color
+                return
 
-    @property
-    def b(self):
-        return self._b
+            color_match = _COLOR_HEX_REGEX.match(color)
+            if color_match is not None:
+                hex_digits = color_match.group(1)
+                if hex_digits is not None:
+                    if len(hex_digits) == 3:
+                        hex_digits = "".join(2 * s for s in hex_digits)
+                    assert len(hex_digits) == 6
+                    self.hex = color
+                    return
 
-    @b.setter
-    def b(self, value: int):
-        self._b = self._min_max(value, 0, 255)
-        self._calc_hsv()
+            raise ValueError(f"unknown color '{color}'")
 
-    @property
-    def h(self):
-        return self._h
+        if isinstance(color, tuple):
+            if len(color) != 3:
+                raise ValueError(f"invalid tuple length, expected 3 but was {len(color)}: {color}")
+            x, y, z = color
+            if isinstance(x, float) and isinstance(y, float) and isinstance(z, float):
+                self.hsv = color
+                return
+            if isinstance(x, int) and isinstance(y, int) and isinstance(z, int):
+                self.rgb = color
+                return
+            raise ValueError(f"invalid tuple types {color}, " + "  ".join([f"color[{i}]='{type(color[i]).__name__}'" for i in range(len(color))]))
 
-    @h.setter
-    def h(self, value: float):
-        self._h = self._min_max(value, 0.0, 360.0)
-        self._calc_rgb()
-
-    @property
-    def s(self):
-        return self._s
-
-    @s.setter
-    def s(self, value: float):
-        self._s = self._min_max(value, 0.0, 100.0)
-        self._calc_rgb()
-
-    @property
-    def v(self):
-        return self._v
-
-    @v.setter
-    def v(self, value: float):
-        self._v = self._min_max(value, 0.0, 100.0)
-        self._calc_rgb()
+        raise ValueError(f"invalid color={color} type '{type(color).__name__}'")
 
     # noinspection PyShadowingBuiltins
     @staticmethod
@@ -1379,21 +1505,93 @@ class Color:
             value = max
         return value
 
-    def _set_rgb(self, rgb: Tuple):
-        self._r = round(self._min_max(rgb[0] * 255.0, 0.0, 255.0))
-        self._g = round(self._min_max(rgb[1] * 255.0, 0.0, 255.0))
-        self._b = round(self._min_max(rgb[2] * 255.0, 0.0, 255.0))
+    def _set_hsv_from_rgb(self):
+        r, g, b = self._rgb
+        h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+        h = self._min_max(h * 360.0, 0.0, 360.0)
+        s = self._min_max(s * 100.0, 0.0, 100.0)
+        v = self._min_max(v * 100.0, 0.0, 100.0)
+        self._hsv = (h, s, v)
 
-    def _set_hsv(self, hsv: Tuple):
-        self._h = self._min_max(hsv[0] * 360.0, 0.0, 360.0)
-        self._s = self._min_max(hsv[1] * 100.0, 0.0, 100.0)
-        self._v = self._min_max(hsv[2] * 100.0, 0.0, 100.0)
+    def _set_rgb_from_hsv(self):
+        h, s, v = self._hsv
+        r, g, b = colorsys.hsv_to_rgb(h / 360.0, s / 100.0, v / 100.0)
+        r = round(self._min_max(r * 255.0, 0.0, 255.0))
+        g = round(self._min_max(g * 255.0, 0.0, 255.0))
+        b = round(self._min_max(b * 255.0, 0.0, 255.0))
+        self._rgb = (r, g, b)
 
-    def _calc_hsv(self):
-        self._set_hsv(colorsys.rgb_to_hsv(self.r / 255.0, self.g / 255.0, self.b / 255.0))
+    @property
+    def rgb(self) -> tuple[int, int, int]:
+        return self._rgb
 
-    def _calc_rgb(self):
-        self._set_rgb(colorsys.hsv_to_rgb(self.h / 360.0, self.s / 100.0, self.v / 100.0))
+    @rgb.setter
+    def rgb(self, rgb: tuple[int, int, int]) -> None:
+        r = self._min_max(rgb[0], 0, 255)
+        g = self._min_max(rgb[1], 0, 255)
+        b = self._min_max(rgb[2], 0, 255)
+        self._rgb = (r, g, b)
+        self._set_hsv_from_rgb()
+
+    @property
+    def hsv(self) -> tuple[float, float, float]:
+        return self.h, self.s, self.v
+
+    @hsv.setter
+    def hsv(self, hsv: tuple[float, float, float]) -> None:
+        h = self._min_max(hsv[0], 0.0, 360.0)
+        s = self._min_max(hsv[1], 0.0, 100.0)
+        v = self._min_max(hsv[2], 0.0, 100.0)
+        self._hsv = (h, s, v)
+        self._set_rgb_from_hsv()
+
+    @property
+    def r(self):
+        return self._rgb[0]
+
+    @r.setter
+    def r(self, value: int):
+        self.rgb = (value, self._rgb[1], self._rgb[2])
+
+    @property
+    def g(self):
+        return self._rgb[1]
+
+    @g.setter
+    def g(self, value: int):
+        self.rgb = (self._rgb[0], value, self._rgb[2])
+
+    @property
+    def b(self):
+        return self._rgb[2]
+
+    @b.setter
+    def b(self, value: int):
+        self.rgb = (self._rgb[0], self._rgb[1], value)
+
+    @property
+    def h(self):
+        return self._hsv[0]
+
+    @h.setter
+    def h(self, value: float):
+        self.hsv = (value, self._hsv[1], self._hsv[2])
+
+    @property
+    def s(self):
+        return self._hsv[1]
+
+    @s.setter
+    def s(self, value: float):
+        self.hsv = (self._hsv[0], value, self._hsv[2])
+
+    @property
+    def v(self):
+        return self._hsv[2]
+
+    @v.setter
+    def v(self, value: float):
+        self.hsv = (self._hsv[0], self._hsv[1], value)
 
     @property
     def hex(self):
@@ -1402,8 +1600,20 @@ class Color:
     @hex.setter
     def hex(self, value):
         h = value.lstrip('#')
-        self._set_rgb(tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)))
-        self._calc_hsv()
+        self.rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+    def __str__(self):
+        return self.hex
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.hex})"
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        if not isinstance(other, Color):
+            return self.__eq__(Color(other))
+        return self.rgb == other.rgb
 
 
 class TerminalGraphicsEffect(IntFlag):
@@ -1613,6 +1823,7 @@ class TerminalGraphicsFormatter(ClassInfo):
 # region images
 
 # @formatter:off
+
 # https://stackoverflow.com/questions/73758704/is-there-a-way-to-clear-a-tree-element-in-pysimplegui-before-adding-new-data
 # folder_icon = b'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAABnUlEQVQ4y8WSv2rUQRSFv7vZgJFFsQg2EkWb4AvEJ8hqKVilSmFn3iNvIAp21oIW9haihBRKiqwElMVsIJjNrprsOr/5dyzml3UhEQIWHhjmcpn7zblw4B9lJ8Xag9mlmQb3AJzX3tOX8Tngzg349q7t5xcfzpKGhOFHnjx+9qLTzW8wsmFTL2Gzk7Y2O/k9kCbtwUZbV+Zvo8Md3PALrjoiqsKSR9ljpAJpwOsNtlfXfRvoNU8Arr/NsVo0ry5z4dZN5hoGqEzYDChBOoKwS/vSq0XW3y5NAI/uN1cvLqzQur4MCpBGEEd1PQDfQ74HYR+LfeQOAOYAmgAmbly+dgfid5CHPIKqC74L8RDyGPIYy7+QQjFWa7ICsQ8SpB/IfcJSDVMAJUwJkYDMNOEPIBxA/gnuMyYPijXAI3lMse7FGnIKsIuqrxgRSeXOoYZUCI8pIKW/OHA7kD2YYcpAKgM5ABXk4qSsdJaDOMCsgTIYAlL5TQFTyUIZDmev0N/bnwqnylEBQS45UKnHx/lUlFvA3fo+jwR8ALb47/oNma38cuqiJ9AAAAAASUVORK5CYII='
 # file_icon = b'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsSAAALEgHS3X78AAABU0lEQVQ4y52TzStEURiHn/ecc6XG54JSdlMkNhYWsiILS0lsJaUsLW2Mv8CfIDtr2VtbY4GUEvmIZnKbZsY977Uwt2HcyW1+dTZvt6fn9557BGB+aaNQKBR2ifkbgWR+cX13ubO1svz++niVTA1ArDHDg91UahHFsMxbKWycYsjze4muTsP64vT43v7hSf/A0FgdjQPQWAmco68nB+T+SFSqNUQgcIbN1bn8Z3RwvL22MAvcu8TACFgrpMVZ4aUYcn77BMDkxGgemAGOHIBXxRjBWZMKoCPA2h6qEUSRR2MF6GxUUMUaIUgBCNTnAcm3H2G5YQfgvccYIXAtDH7FoKq/AaqKlbrBj2trFVXfBPAea4SOIIsBeN9kkCwxsNkAqRWy7+B7Z00G3xVc2wZeMSI4S7sVYkSk5Z/4PyBWROqvox3A28PN2cjUwinQC9QyckKALxj4kv2auK0xAAAAAElFTkSuQmCC'
@@ -1750,8 +1961,8 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
     def __init__(self, follow_symlinks: bool = False):
         super().__init__()
         self._is_case_sensitive: bool = RUNTIME_INFO.os.is_fs_case_sensitive
-        self._all = self._dict()
-        self._children = self._dict()
+        self._all: MutableMapping[str, FileSystemEntry] = self._dict()
+        self._children: MutableMapping[str, list[FileSystemEntry]] = self._dict()
         self._parents = self._dict()
         self.follow_symlinks: bool = follow_symlinks
 
@@ -1759,27 +1970,64 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
 
     # region method
 
-    def _dict(self):
-        return dict() if self.is_case_sensitive else DictStrCasefold()
+    def _dict(self) -> MutableMapping[str, Any]:
+        return dict() if self.is_case_sensitive else DictStr(key_converter=lambda x: x.casefold())
+
+    def cache(self, path: str) -> None:
+        def get_entries(p: str, cdict) -> None:
+            if p in cdict:
+                return  # recursion check
+            des = cdict.get(p)
+            if des is None:
+                cdict[p] = des = []
+            with os.scandir(p) as it:
+                for de in it:
+                    if de is not None:
+                        des.append(de)
+                        if de.is_dir():
+                            get_entries(de.path, cdict)
+
+        path = str(self.resolve(Path(path)))
+        children: dict[str, list[DirEntry]] = {}
+        get_entries(path, children)
+        for parent_de, children_de in children.items():
+            parent_fse = self.get(parent_de, is_path_resolved=True)
+            children_fse = [self.get(de, is_path_resolved=True) for de in children_de]
+            self._children[parent_fse.path_str] = children_fse
 
     def clear(self):
         self._all = self._dict()
         self._children = self._dict()
         self._parents = self._dict()
 
-    # endregion method
+    def resolve(self, path: Path) -> Path:
+        try:
+            pp = path.expanduser()
+            if pp is not None:
+                path = pp
+        except Exception as e:
+            self._log.debug(f"error expanduser()", exc_info=e)
 
-    # region method
+        try:
+            pp = path.resolve()
+            if pp is not None:
+                path = pp
+        except Exception as e:
+            self._log.debug(f"error resolve()", exc_info=e)
+
+        return path
 
     def add(self, entry: FileSystemEntry) -> None:
         self._all[entry.path_str] = entry
 
-    def get(self, path: str) -> FileSystemEntry | None:
-        o = self._all.get(path)
+    def get(self, path: str | DirEntry, is_path_resolved: bool = False) -> FileSystemEntry | None:
+        # o = self._all.get(path)
+        path_str = path.path if isinstance(path, DirEntry) else path
+        o = self._all.get(path_str)
         if o is not None:
             return o
-        o = FileSystemEntry(path, snapshot=self)
-        self._all[path] = o
+        o = FileSystemEntry(path, snapshot=self, is_path_resolved=is_path_resolved)
+        self._all[path_str] = o
         return o
 
     # noinspection PyBroadException
@@ -1792,21 +2040,22 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         if children is not None:
             return children
 
-        children_str = []
+        children_de = []
         try:
             with os.scandir(path_str) as it:
                 for obj in it:
                     if obj is not None:
-                        children_str.append(obj.path)
+                        children_de.append(obj)
+
         except Exception as e:
             msg = f"Could not get directory listing for {path_str}"
             _log.warning(msg, exc_info=e)
             entry.add_error(msg, e)
             return []  # do not cache failed attempts
 
-        children = []
-        for child_str in children_str:
-            children.append(self.get(child_str))
+        children: list[FileSystemEntry] = []
+        for child_de in children_de:
+            children.append(self.get(child_de, is_path_resolved=True))
 
         self._children[path_str] = children
         return children
@@ -1820,11 +2069,12 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         if path_parent is None:
             return None
 
-        if (
-                (self._is_case_sensitive and str(path_parent) == str(entry.path)) or
-                (not self._is_case_sensitive and str(path_parent).casefold() == str(entry.path).casefold())
-        ):
-            return None  # at root so return no parent
+        if self._is_case_sensitive:
+            if str(path_parent) == str(entry.path):
+                return None  # at root so return no parent
+        else:
+            if str(path_parent).casefold() == str(entry.path).casefold():
+                return None  # at root so return no parent
 
         return self.get(str(path_parent))
 
@@ -1839,7 +2089,7 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
             for child in dir_current.children:
                 child_path_str = child.path_str
                 if child_path_str in entries:
-                    continue
+                    continue  # already have the entry, so prevent infinite recursion
                 entries[child_path_str] = child
                 if child.is_dir:
                     dirs.append(child)
@@ -1847,7 +2097,7 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         items = [x for x in entries.values()]
         if include_self:
             items.append(entry)
-        items.sort()
+        # items.sort()
         return items
 
     # endregion method
@@ -1875,8 +2125,9 @@ class FileSystemEntry(ClassInfo):
     def __init__(
         self,
         path: str | Path | DirEntry,
-        follow_symlinks: bool | None = None,
-        snapshot: FileSystemSnapshot | None = None,
+        follow_symlinks: bool = None,
+        snapshot: FileSystemSnapshot = None,
+        is_path_resolved: bool = False,
     ) -> None:
         super().__init__()
         self._snapshot = snapshot if snapshot is not None else FileSystemSnapshot()
@@ -1894,7 +2145,7 @@ class FileSystemEntry(ClassInfo):
         self._datetime_created: datetime | None = None
         self._size: int | None = None
         self._children: list[DirEntry] | None = None
-        self.errors: [(str, Exception | None)] = []
+        self.errors: list[(str, Exception | None)] = []
 
         if isinstance(path, DirEntry):
             self._dir_entry = path
@@ -1903,7 +2154,10 @@ class FileSystemEntry(ClassInfo):
         if not isinstance(path, Path):
             path = Path(path)
 
-        path = path.absolute()
+        if not is_path_resolved:
+            _log.debug(f"resolving path: {path}")
+            path = self._snapshot.resolve(path)
+
         self._path = path
         self._path_str = str(path)
         self._path_str_cased = self._path_str if self._snapshot.is_case_sensitive else self._path_str.casefold()
@@ -2207,24 +2461,6 @@ class FileSystemEntry(ClassInfo):
         if not isinstance(__value, FileSystemEntry):
             return self.__lt__(self.__class__(str(__value)))
 
-        parts_x = self.path_parts_cased
-        parts_y = __value.path_parts_cased
-        len_x = len(parts_x)
-        len_y = len(parts_y)
-        len_min_parts = len_x if len_x < len_y else len_y
-
-        for i in range(len_min_parts):
-            x = parts_x[i]
-            y = parts_y[i]
-            if x == y:
-                continue
-            if x < y:
-                return True
-            return False
-
-        if len_x < len_y:
-            return True
-
-        return False
+        return compare_iterable(self.path_parts_cased, __value.path_parts_cased)
 
     # endregion override

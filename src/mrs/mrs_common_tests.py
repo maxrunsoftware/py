@@ -1,3 +1,4 @@
+import timeit
 import unittest
 
 from src.mrs.mrs_common import *
@@ -126,3 +127,41 @@ class MRSCommonTests(unittest.TestCase):
             with self.subTest(x=x, y=y):
                 self.assertEqual(-1, compare(x, y), f"compare({x}, {y}) != -1")
                 self.assertEqual(1, compare(y, x), f"compare({y}, {x}) != 1")
+
+    NUMBER_OF_TIMEIT = 1
+
+    def test_FileSystemSnapshot1(self):
+        def test():
+            fse = FileSystemEntry('/Users/user/dev')
+            fse_children = fse.children_all
+            print(f"test_FileSystemSnapshot1: {len(fse_children)}")
+
+        test()
+        # print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))
+
+    def test_FileSystemSnapshot2(self):
+        def test():
+            def get_entries(p) -> list[DirEntry]:
+                items = []
+                p = p.path if isinstance(p, DirEntry) else p
+                with os.scandir(p) as it:
+                    for entry in it:
+                        if entry is not None:
+                            items.append(entry)
+                            if entry.is_dir():
+                                items.extend(get_entries(entry))
+                return items
+
+            items_all = get_entries('/Users/user/dev')
+            print(f"test_FileSystemSnapshot2: {len(items_all)}")
+
+        print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))
+
+    def test_FileSystemSnapshot3(self):
+        def test():
+            fse = FileSystemEntry('/Users/user/dev')
+            fse._snapshot.cache('/Users/user/dev')
+            fse_children = fse.children_all
+            print(f"test_FileSystemSnapshot3: {len(fse_children)}")
+
+        print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))
