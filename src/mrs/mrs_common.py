@@ -2036,7 +2036,7 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
             return []
 
         path_str = entry.path_str
-        children = self._children.get(path_str)
+        children: list[FileSystemEntry] = self._children.get(path_str)
         if children is not None:
             return children
 
@@ -2053,9 +2053,10 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
             entry.add_error(msg, e)
             return []  # do not cache failed attempts
 
-        children: list[FileSystemEntry] = []
+        children = []
         for child_de in children_de:
-            children.append(self.get(child_de, is_path_resolved=True))
+            child = self.get(child_de, is_path_resolved=True)
+            children.append(child)
 
         self._children[path_str] = children
         return children
