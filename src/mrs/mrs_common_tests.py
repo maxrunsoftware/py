@@ -128,7 +128,7 @@ class MRSCommonTests(unittest.TestCase):
                 self.assertEqual(-1, compare(x, y), f"compare({x}, {y}) != -1")
                 self.assertEqual(1, compare(y, x), f"compare({y}, {x}) != 1")
 
-    NUMBER_OF_TIMEIT = 1
+    NUMBER_OF_TIMEIT = 5
 
     def test_FileSystemSnapshot1(self):
         def test():
@@ -136,8 +136,8 @@ class MRSCommonTests(unittest.TestCase):
             fse_children = fse.children_all
             print(f"test_FileSystemSnapshot1: {len(fse_children)}")
 
-        test()
-        # print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))
+        # test()
+        print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))
 
     def test_FileSystemSnapshot2(self):
         def test():
@@ -164,4 +164,4 @@ class MRSCommonTests(unittest.TestCase):
             fse_children = fse.children_all
             print(f"test_FileSystemSnapshot3: {len(fse_children)}")
 
-        print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))
+        # print(timeit.timeit("test()", setup='import gc\ngc.enable()', number=self.__class__.NUMBER_OF_TIMEIT, globals=locals()))

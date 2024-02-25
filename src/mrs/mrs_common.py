@@ -2118,7 +2118,29 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
     # endregion override
 
 
-class FileSystemEntry(ClassInfo):
+class FileSystemEntry:
+
+    __slots__ = (
+        '_snapshot',
+        '_path',
+        '_path_str',
+        '_path_str_cased',
+        '_path_parts',
+        '_path_parts_cased',
+        '_name',
+        '_dir_entry',
+        '_stat',
+        '_lstat',
+        '_is_file',
+        '_is_dir',
+        '_is_symlink',
+        '_follow_symlinks',
+        '_datetime_accessed',
+        '_datetime_modified',
+        '_datetime_created',
+        '_size',
+        'errors',
+    )
 
     # region init
 
@@ -2133,6 +2155,10 @@ class FileSystemEntry(ClassInfo):
         self._snapshot = snapshot if snapshot is not None else FileSystemSnapshot()
         self._path: Path | None = None
         self._path_str: str | None = None
+        self._path_str_cased: str | None = None
+        self._path_parts: list[str] | None = None
+        self._path_parts_cased: list[str] | None = None
+        self._name: str | None = None
         self._dir_entry: DirEntry | None = None
         self._stat: os.stat_result | None = None
         self._lstat: os.stat_result | None = None
@@ -2144,26 +2170,41 @@ class FileSystemEntry(ClassInfo):
         self._datetime_modified: datetime | None = None
         self._datetime_created: datetime | None = None
         self._size: int | None = None
-        self._children: list[DirEntry] | None = None
+        # self._children: list[DirEntry] | None = None
         self.errors: list[(str, Exception | None)] = []
 
         if isinstance(path, DirEntry):
             self._dir_entry = path
-            path = Path(path.path)
+            if is_path_resolved:
+                self._path_str = path.path
+            else:
+                path = Path(path.path)
+                _log.debug(f"resolving path: {path}")
+                path = self._snapshot.resolve(path)
+                self._path = path
+                self._path_str = str(path)
 
-        if not isinstance(path, Path):
-            path = Path(path)
+        elif isinstance(path, str):
+            if is_path_resolved:
+                self._path_str = path
+            else:
+                path = Path(path)
+                _log.debug(f"resolving path: {path}")
+                path = self._snapshot.resolve(path)
+                self._path = path
+                self._path_str = str(path)
 
-        if not is_path_resolved:
-            _log.debug(f"resolving path: {path}")
-            path = self._snapshot.resolve(path)
+        elif isinstance(path, Path):
+            if is_path_resolved:
+                self._path = path
+                self._path_str = str(path)
+            else:
+                _log.debug(f"resolving path: {path}")
+                path = self._snapshot.resolve(path)
+                self._path = path
+                self._path_str = str(path)
 
-        self._path = path
-        self._path_str = str(path)
         self._path_str_cased = self._path_str if self._snapshot.is_case_sensitive else self._path_str.casefold()
-        self._path_parts: list[str] | None = None
-        self._path_parts_cased: list[str] | None = None
-        self._name: str = path.name
 
     # endregion init
 
@@ -2217,7 +2258,11 @@ class FileSystemEntry(ClassInfo):
 
     @property
     def name(self) -> str:
-        return self._name
+        o = self._name
+        if o is None:
+            o = self.path.name
+            self._name = o
+        return o
 
     @property
     def dir_entry(self) -> DirEntry | None:
@@ -2443,13 +2488,6 @@ class FileSystemEntry(ClassInfo):
 
     def __str__(self):
         return self._path_str
-
-    def __repr__(self):
-        return (
-                self.__class__.__module__
-                + "." + self.__class__.__name__
-                + f"(path={self.path_str}, follow_symlinks={self._follow_symlinks})"
-        )
 
     def __hash__(self):
         return hash(self._path_str_cased)
