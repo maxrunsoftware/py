@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import base64
+import collections
 import colorsys
 import hashlib
 import inspect
@@ -1960,11 +1961,11 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
 
     def __init__(self, follow_symlinks: bool = False):
         super().__init__()
+        self.follow_symlinks: bool = follow_symlinks
         self._is_case_sensitive: bool = RUNTIME_INFO.os.is_fs_case_sensitive
         self._all: MutableMapping[str, FileSystemEntry] = self._dict()
+        # self._parents = self._dict()
         self._children: MutableMapping[str, list[FileSystemEntry]] = self._dict()
-        self._parents = self._dict()
-        self.follow_symlinks: bool = follow_symlinks
 
     # endregion init
 
@@ -1998,7 +1999,6 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
     def clear(self):
         self._all = self._dict()
         self._children = self._dict()
-        self._parents = self._dict()
 
     def resolve(self, path: Path) -> Path:
         try:
@@ -2031,6 +2031,24 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         return o
 
     # noinspection PyBroadException
+    def get_parent(self, entry: FileSystemEntry) -> FileSystemEntry | None:
+        path_parent = entry.path.parent
+        if path_parent is None:
+            return None
+        path_parent = path_parent.absolute()
+        if path_parent is None:
+            return None
+
+        if self._is_case_sensitive:
+            if str(path_parent) == str(entry.path):
+                return None  # at root so return no parent
+        else:
+            if str(path_parent).casefold() == str(entry.path).casefold():
+                return None  # at root so return no parent
+
+        return self.get(str(path_parent))
+
+    # noinspection PyBroadException
     def get_children(self, entry: FileSystemEntry) -> list[FileSystemEntry]:
         if not entry.is_dir:
             return []
@@ -2061,45 +2079,37 @@ class FileSystemSnapshot(ClassInfo, ClassLogging):
         self._children[path_str] = children
         return children
 
-    # noinspection PyBroadException
-    def get_parent(self, entry: FileSystemEntry) -> FileSystemEntry | None:
-        path_parent = entry.path.parent
-        if path_parent is None:
-            return None
-        path_parent = path_parent.absolute()
-        if path_parent is None:
-            return None
-
-        if self._is_case_sensitive:
-            if str(path_parent) == str(entry.path):
-                return None  # at root so return no parent
-        else:
-            if str(path_parent).casefold() == str(entry.path).casefold():
-                return None  # at root so return no parent
-
-        return self.get(str(path_parent))
-
     def get_children_all(self, entry: FileSystemEntry, include_self: bool = False) -> list[FileSystemEntry]:
+        items: list[FileSystemEntry] = [entry] if include_self else []
         if not entry.path.is_dir():
-            return [entry] if include_self else []
+            return items
 
-        entries = self._dict()
-        dirs = [entry]
-        while len(dirs) > 0:
+        dirs = collections.deque()
+        dirs.append(entry)
+        dirs_checked = self._dict()
+        while dirs:
             dir_current = dirs.pop()
+            if dir_current.path_str in dirs_checked:
+                continue  # already have the entry, so prevent infinite recursion
+            dirs_checked[dir_current.path_str] = True
             for child in dir_current.children:
-                child_path_str = child.path_str
-                if child_path_str in entries:
-                    continue  # already have the entry, so prevent infinite recursion
-                entries[child_path_str] = child
+                items.append(child)
                 if child.is_dir:
                     dirs.append(child)
-
-        items = [x for x in entries.values()]
-        if include_self:
-            items.append(entry)
-        # items.sort()
         return items
+
+    def remove(self, entry: FileSystemEntry):
+        del self._all[entry.path_str]
+        parent_children = self._children.get(entry.parent.path_str)
+        if parent_children is not None:
+            parent_children.remove(entry)
+        if entry.is_dir:
+
+
+
+
+
+
 
     # endregion method
 
@@ -2141,6 +2151,7 @@ class FileSystemEntry:
         '_datetime_created',
         '_size',
         'errors',
+        'exists',
     )
 
     # region init
@@ -2151,6 +2162,7 @@ class FileSystemEntry:
         follow_symlinks: bool = None,
         snapshot: FileSystemSnapshot = None,
         is_path_resolved: bool = False,
+        exists: bool = True
     ) -> None:
         super().__init__()
         self._snapshot = snapshot if snapshot is not None else FileSystemSnapshot()
@@ -2173,6 +2185,7 @@ class FileSystemEntry:
         self._size: int | None = None
         # self._children: list[DirEntry] | None = None
         self.errors: list[(str, Exception | None)] = []
+        self.exists = exists
 
         if isinstance(path, DirEntry):
             self._dir_entry = path
@@ -2213,6 +2226,13 @@ class FileSystemEntry:
 
     def add_error(self, msg: str, exception: Exception | None = None) -> None:
         self.errors.append((msg, exception))
+
+    def refresh(self):
+        self._snapshot.remove(self)
+        for attr in self.__class__.__slots__:
+            if attr not in ["_path", "_path_str"]:
+                setattr(self, attr, None)
+
 
     # endregion method
 

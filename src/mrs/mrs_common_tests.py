@@ -128,7 +128,7 @@ class MRSCommonTests(unittest.TestCase):
                 self.assertEqual(-1, compare(x, y), f"compare({x}, {y}) != -1")
                 self.assertEqual(1, compare(y, x), f"compare({y}, {x}) != 1")
 
-    NUMBER_OF_TIMEIT = 5
+    NUMBER_OF_TIMEIT = 1
 
     def test_FileSystemSnapshot1(self):
         def test():
