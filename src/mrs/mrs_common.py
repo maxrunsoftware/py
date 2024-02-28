@@ -2162,7 +2162,7 @@ class FileSystemEntry:
         follow_symlinks: bool = None,
         snapshot: FileSystemSnapshot = None,
         is_path_resolved: bool = False,
-        exists: bool = True
+        exists: bool = True,
     ) -> None:
         super().__init__()
         self._snapshot = snapshot if snapshot is not None else FileSystemSnapshot()
@@ -2523,3 +2523,351 @@ class FileSystemEntry:
         return compare_iterable(self.path_parts_cased, __value.path_parts_cased)
 
     # endregion override
+
+
+
+
+class FileSystemEntry2:
+
+    DATETIME_MIN: datetime = datetime.min.astimezone(tz=timezone.utc)
+
+    # region init
+
+    def __init__(
+        self,
+        path: str | Path | DirEntry,
+        follow_symlinks: bool = None,
+        is_path_resolved: bool = False,
+        is_path_case_sensitive: bool = None,
+        parent: FileSystemEntry = None,
+    ) -> None:
+        super().__init__()
+        self._follow_symlinks: bool = follow_symlinks
+        self._is_path_case_sensitive: bool = RUNTIME_INFO.os.is_fs_case_sensitive if is_path_case_sensitive is None else is_path_case_sensitive
+        self._parent: FileSystemEntry | None = parent
+        self._children: tuple[FileSystemEntry] | None = None
+
+        self._path_str: str | None = None
+        self._path_str_cased: str | None = None
+
+        self._path: Path | None = None
+        self._path_parts: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._name: str | None = None
+        self._dir_entry: DirEntry | None = None
+        self._stat_with_symlinks: os.stat_result | None = None
+        self._stat_without_symlinks: os.stat_result | None = None
+        self._type_fds: tuple[bool, bool, bool] | None = None
+        self._datetime_cma: tuple[datetime, datetime, datetime] | None = None
+        self._size: int | None = None
+
+        path_unresolved: Path | None = None
+
+        if isinstance(path, DirEntry):
+            self._dir_entry = path
+            if is_path_resolved:
+                self._path_str = path.path
+            else:
+                path_unresolved = Path(path.path)
+        elif isinstance(path, str):
+            if is_path_resolved:
+                self._path_str = path
+            else:
+                path_unresolved = Path(path)
+        elif isinstance(path, Path):
+            if is_path_resolved:
+                self._path = path
+                self._path_str = str(path)
+            else:
+                path_unresolved = path
+
+        if path_unresolved is not None:
+            path = self.__class__._resolve(path_unresolved)
+            self._path = path
+            self._path_str = str(path)
+
+        assert self._path_str is not None
+        self._path_str_cased = self._path_str if self.is_path_case_sensitive else self._path_str.casefold()
+
+    # endregion init
+
+    # region method
+
+    @staticmethod
+    def _resolve(path: Path) -> Path:
+        _log.debug(f"resolving path: {path}")
+        try:
+            pp = path.expanduser()
+            if pp is not None:
+                path = pp
+        except Exception as e:
+            _log.debug(f"error expanduser()", exc_info=e)
+
+        try:
+            pp = path.resolve()
+            if pp is not None:
+                path = pp
+        except Exception as e:
+            _log.debug(f"error resolve()", exc_info=e)
+
+        return path
+
+    def refresh(self):
+        for attr in self.__class__.__slots__:
+            if attr not in ["_path", "_path_str"]:
+                setattr(self, attr, None)
+
+    def _get_path_parts(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        o = self._path_parts
+        if o is None:
+            path_parts = tuple(x for x in self.path.parts)
+            path_parts_cased = path_parts if self.is_path_case_sensitive else tuple(x.casefold() for x in path_parts)
+            self._path_parts = o = (path_parts, path_parts_cased)
+        return o
+
+    def _get_type_fds(self) -> tuple[bool, bool, bool]:
+        o = self._type_fds
+        if o is None:
+            if self._dir_entry is not None:
+                f = self._dir_entry.is_file(follow_symlinks=self.follow_symlinks)
+                d = self._dir_entry.is_dir(follow_symlinks=self.follow_symlinks)
+                s = self._dir_entry.is_symlink()
+            else:
+                f = self.path.is_file()
+                d = self.path.is_dir()
+                s = self.path.is_symlink()
+            self._type_fds = o = (f, d, s)
+        return o
+
+    def _get_datetime_cma(self) -> tuple[datetime, datetime, datetime]:
+        o = self._datetime_cma
+        if o is not None:
+            return o
+        
+        min_time = self.__class__.DATETIME_MIN
+        fts = lambda timestamp: datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+        try:
+            a = fts(self.stat.st_atime)
+        except Exception as e:
+            try:
+                a = fts(os.path.getatime(self.path))
+            except Exception as ee:
+                msg = f"Could not get datetime_accessed for {self.path_str}"
+                _log.warning(msg, exc_info=ExceptionGroup(msg, [e, ee]))
+                a = min_time
+
+        try:
+            m = fts(self.stat.st_mtime)
+        except Exception as e:
+            try:
+                m = fts(os.path.getmtime(self.path))
+            except Exception as ee:
+                msg = f"Could not get datetime_modified for {self.path_str}"
+                _log.warning(msg, exc_info=ExceptionGroup(msg, [e, ee]))
+                m = min_time
+        
+        is_win = RUNTIME_INFO.os in [OperatingSystem.WINDOWS, OperatingSystem.WINDOWS_CYGWIN]
+        try:
+            c = fts(self.stat.st_ctime) if is_win else fts(self.stat.st_birthtime)
+        except Exception as e:
+            try:
+                c = fts(self.stat.st_birthtime) if is_win else fts(self.stat.st_ctime)
+            except Exception as ee:
+                try:
+                    c = fts(os.path.getctime(self.path))
+                except Exception as eee:
+                    msg = f"Could not get datetime_created for {self.path_str}"
+                    _log.warning(msg, exc_info=ExceptionGroup(msg, [e, ee, eee]))
+                    c = m
+        
+        self._datetime_cma = o = (c, m, a)
+        return o
+
+    # endregion method
+
+    # region @property
+
+    @property
+    def follow_symlinks(self) -> bool:
+        return self._follow_symlinks
+
+    @property
+    def is_path_case_sensitive(self) -> bool:
+        return self._is_path_case_sensitive
+
+    @property
+    def path_str(self) -> str:
+        return self._path_str
+
+    @property
+    def path_str_cased(self) -> str:
+        return self._path_str_cased
+
+    @property
+    def path_parts(self) -> tuple[str, ...]:
+        return self._get_path_parts()[0]
+
+    @property
+    def path_parts_cased(self) -> tuple[str, ...]:
+        return self._get_path_parts()[1]
+
+    @property
+    def name(self) -> str:
+        o = self._name
+        if o is None:
+            self._name = o = self.path.name
+        return o
+
+    @property
+    def path(self) -> Path:
+        o = self._path
+        if o is None:
+            self._path = o = Path(self.path_str)
+        return o
+
+    @property
+    def stat_with_symlinks(self) -> os.stat_result:
+        o = self._stat_with_symlinks
+        if o is None:
+            if self._dir_entry is not None:
+                self._stat_with_symlinks = o = self._dir_entry.stat(follow_symlinks=True)
+            else:
+                self._stat_with_symlinks = o = os.stat(self.path, follow_symlinks=True)
+        return o
+
+    @property
+    def stat_without_symlinks(self) -> os.stat_result:
+        o = self._stat_without_symlinks
+        if o is None:
+            if self._dir_entry is not None:
+                self._stat_without_symlinks = o = self._dir_entry.stat(follow_symlinks=False)
+            else:
+                self._stat_without_symlinks = o = os.stat(self.path, follow_symlinks=False)
+        return o
+
+    @property
+    def stat(self) -> os.stat_result:
+        return self.stat_with_symlinks if self.follow_symlinks else self._stat_without_symlinks
+
+    @property
+    def is_file(self) -> bool:
+        return self._get_type_fds()[0]
+
+    @property
+    def is_dir(self) -> bool:
+        return self._get_type_fds()[1]
+
+    @property
+    def is_symlink(self) -> bool:
+        return self._get_type_fds()[2]
+
+    @property
+    def datetime_created(self) -> datetime:
+        return self._get_datetime_cma()[0]
+
+    @property
+    def datetime_modified(self) -> datetime:
+        return self._get_datetime_cma()[1]
+
+    @property
+    def datetime_accessed(self) -> datetime:
+        return self._get_datetime_cma()[2]
+
+    @property
+    def size(self) -> int:
+        o = self._size
+        if o is not None:
+            return o
+
+        exs = []
+        try:
+            o = self.stat.st_size
+        except Exception as e:
+            exs.append(e)
+
+        if o is None or o < 0:
+            try:
+                o = os.path.getsize(self.path)
+            except Exception as e:
+                exs.append(e)
+
+        if o is None or o < 0:
+            try:
+                o = self.stat_with_symlinks.st_size
+            except Exception as e:
+                exs.append(e)
+
+        if o is None or o < 0:
+            try:
+                o = self.stat_without_symlinks.st_size
+            except Exception as e:
+                exs.append(e)
+
+        if o is None:
+            msg = f"Could not get size for {self.path_str}"
+            _log.warning(msg, exc_info=ExceptionGroup(msg, exs) if exs else None)
+            o = -1
+
+        self._size = o
+        return o
+
+    @property
+    def children(self) -> tuple[FileSystemEntry, ...]:
+        return self._children
+
+    @property
+    def parent(self) -> FileSystemEntry | None:
+        o = self._parent
+        if o is not None:
+            return o
+
+        path = self.path
+        path_parent = self.path.parent
+        if path_parent is None:
+            
+        elif path_parent == path:
+            return None
+        el
+        if self._is_case_sensitive:
+            if str(path_parent) == str(entry.path):
+                return None  # at root so return no parent
+        else:
+            if str(path_parent).casefold() == str(entry.path).casefold():
+                return None  # at root so return no parent
+
+        return self.get(str(path_parent))
+
+    @property
+    def children_all(self) -> Iterable[FileSystemEntry]:
+        return self.get_children_all(self)
+
+    # endregion @property
+
+    # region override
+
+    def __eq__(self, __value):
+        if __value is None:
+            return False
+        if not isinstance(__value, FileSystemEntry):
+            return self.__eq__(self.__class__(str(__value)))
+        return self.path_str_cased == __value.path_str_cased
+
+    def __str__(self):
+        return self._path_str
+
+    def __hash__(self):
+        return hash(self._path_str_cased)
+
+    def __lt__(self, __value):
+        if __value is None:
+            return False
+
+        if not isinstance(__value, FileSystemEntry):
+            return self.__lt__(self.__class__(str(__value)))
+
+        return compare_iterable(self.path_parts_cased, __value.path_parts_cased)
+
+    # endregion override
+
+
+
